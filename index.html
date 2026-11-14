@@ -82,6 +82,9 @@
   .selbar{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--surface);border-top:1px solid var(--line);
     padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:flex;gap:6px;align-items:center;flex-wrap:wrap}
   .selbar .count{margin-right:auto;font-weight:600}
+  .subrow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px dashed var(--line)}
+  .subrow:first-child{border-top:none}
+  .subrow .btns{margin:0;flex:0 0 auto}
   .item-detail{grid-column:1 / -1;padding:0 14px 12px 29px;font-size:15px;color:var(--sub)}
   .item-detail dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:0}
   .item-detail dt{color:var(--faint)} .item-detail dd{margin:0;color:var(--ink);font-variant-numeric:tabular-nums}
@@ -564,7 +567,8 @@ const CAT_HINTS = [
   ["양념·소스", ["간장","된장","고추장","쌈장","소스","케첩","케찹","마요","식초","설탕","소금","참기름","들기름","식용유","올리브유","액젓","다시다","물엿","올리고당","후추","고춧가루","카레"]],
   ["두부·가공식품", ["두부","어묵","햄","소시지","만두","떡","김치","유부","맛살","라면","우동","국수","통조림","참치"]],
   ["유제품·계란", ["우유","계란","달걀","치즈","요거트","요구르트","버터","생크림"]],
-  ["육류·생선", ["고기","돼지","소고기","한우","닭","오리","삼겹","목살","앞다리","뒷다리","갈비","등심","안심","베이컨","생선","고등어","갈치","연어","오징어","새우","조개","꽃게","낙지","주꾸미","동태"]],
+  ["육류·생선", ["고기","돼지","소고기","한우","닭","오리","삼겹","목살","앞다리","뒷다리","갈비","등심","안심","베이컨",
+    "항정","가브리","채끝","부채살","양지","사태","우둔","차돌","살치","치마살","토시살","국거리","백숙","생선","고등어","갈치","연어","오징어","새우","조개","꽃게","낙지","주꾸미","동태"]],
   ["신선채소", ["파","양파","마늘","시금치","배추","양배추","상추","깻잎","부추","미나리","무","당근","감자","고구마","호박","오이","가지","버섯","콩나물","숙주","고추","파프리카","피망","브로콜리","토마토","사과","배","바나나","귤","딸기","열무","생강","청경채","레몬","아보카도","샐러드"]]
 ];
 // 실온 보관이 흔한 품목
@@ -793,6 +797,47 @@ function rowHtml(it, right = "qty", showStorage = false) {
   </div>`;
 }
 
+// 같은 대표 이름 묶기 (목록 순서 = 가장 빠른 유통기한 순 유지)
+function groupByName(arr) {
+  const m = new Map();
+  for (const it of arr) { const k = normName(dispName(it)) || it.id; if (!m.has(k)) m.set(k, []); m.get(k).push(it); }
+  return [...m.values()];
+}
+function groupAmount(g) {
+  const t = g[0].qtyType;
+  if (t === "percent" && g.every(x => x.qtyType === "percent")) return g.slice(0, 3).map(x => `${round1(Number(x.amount) || 0)}%`).join(", ") + (g.length > 3 ? " …" : "");
+  if (g.some(x => x.qtyType !== t) || t === "stock") return `${g.length}개 품목`;
+  const sum = round1(g.reduce((a, x) => a + (Number(x.amount) || 0), 0));
+  return shortAmount({ ...g[0], amount: sum });
+}
+// 묶인 한 줄 (펼치면 품목별로)
+function groupRowHtml(g, showStorage = false) {
+  const first = g[0];   // 유통기한이 가장 빠른 것
+  const key = "g:" + normName(dispName(first)) + ":" + first.storage;
+  const open = viewMode === "detail" || openIds.has(key);
+  const es = expState(first);
+  const stores = [...new Set(g.map(x => x.storage))];
+  return `<div class="item">
+    <button class="item-main" data-act="gtoggle" data-gkey="${esc(key)}" aria-expanded="${open}">
+      <span class="item-name">${esc(dispName(first))}</span><span class="item-tag">${g.length}개 품목${showStorage ? " " + esc(stores.join("/")) : ""}</span>
+      ${es ? `<span class="tape ${es}">${ddayText(first)}${first.expiryEstimated ? " (추정)" : ""}</span>` : ""}
+      <span class="item-qty">${esc(groupAmount(g))}</span>
+    </button>
+    <div class="item-act"><button class="mini fill" data-act="use" data-id="${esc(first.id)}" title="유통기한이 빠른 것부터">사용</button></div>
+    ${open ? `<div class="item-detail">${g.map(it => `<div class="subrow">
+      <div><b>${esc(it.name)}</b> <span class="item-tag">${esc(it.storage)}</span>
+        <div class="meta" style="margin:2px 0 0">${expiryHtml(it)}, ${esc(amountText(it))}</div>
+        ${it.memo ? `<div class="meta" style="margin:0">메모: ${esc(it.memo)}</div>` : ""}</div>
+      <div class="btns"><button class="mini fill" data-act="use" data-id="${esc(it.id)}">사용</button><button class="mini" data-act="edit" data-id="${esc(it.id)}">수정</button></div>
+    </div>`).join("")}</div>` : ""}
+  </div>`;
+}
+// 목록: 선택 모드가 아니면 같은 이름을 한 줄로
+const itemRows = (arr, showStorage = false) => selectMode
+  ? arr.map(it => rowHtml(it, "qty", showStorage)).join("")
+  : groupByName(arr).map(g => g.length > 1 ? groupRowHtml(g, showStorage) : rowHtml(g[0], "qty", showStorage)).join("");
+const itemList = (arr, cls = "", showStorage = false) => `<div class="list ${cls}">${itemRows(arr, showStorage)}</div>`;
+
 function usedRowHtml(it) {
   if (selectMode) {
     const on = selectedIds.has(it.id);
@@ -834,10 +879,10 @@ function renderItems() {
     html = [...KNOWN, "기타"].map(st => {
       const arr = food.filter(it => st === "기타" ? !KNOWN.includes(it.storage) : it.storage === st);
       return arr.length ? `<h2 class="group">${st} <span class="num">${arr.length}</span></h2>` +
-        listHtml(arr, it => rowHtml(it), st === "냉동" ? "frozen" : "") : "";
-    }).join("") + (sea.length ? `<h2 class="group">조미료 <span class="num">${sea.length}</span></h2>` + listHtml(sea, it => rowHtml(it, "qty", true)) : "");
+        itemList(arr, st === "냉동" ? "frozen" : "") : "";
+    }).join("") + (sea.length ? `<h2 class="group">조미료 <span class="num">${sea.length}</span></h2>` + itemList(sea, "", true) : "");
   } else {
-    html = listHtml(active, it => rowHtml(it, "qty", storageFilter === "조미료"), storageFilter === "냉동" ? "frozen" : "");
+    html = itemList(active, storageFilter === "냉동" ? "frozen" : "", storageFilter === "조미료");
   }
   if ($("showUsed").checked) {
     html += '<h2 class="group">다 쓴 품목</h2>' + (used.length ? listHtml(used, usedRowHtml) : '<p class="meta">없음</p>');
@@ -896,6 +941,13 @@ $("showUsed").onchange = renderItems;
 document.addEventListener("click", async e => {
   const b = e.target.closest("[data-act]");
   if (!b) return;
+  if (b.dataset.act === "gtoggle") {
+    if (viewMode === "detail") return;
+    const k = b.dataset.gkey;
+    openIds.has(k) ? openIds.delete(k) : openIds.add(k);
+    renderItems();
+    return;
+  }
   const it = items.find(x => x.id === b.dataset.id);
   if (!it) return;
   if (b.dataset.act === "select") {
@@ -1086,6 +1138,16 @@ const normName = s => String(s || "").replace(/[\s()（）\[\]]/g, "");
 const ALIASES = { "달걀": ["계란"], "계란": ["달걀"], "쇠고기": ["소고기"], "소고기": ["쇠고기"], "파": ["대파", "쪽파"],
   "다진마늘": ["마늘"], "간마늘": ["마늘"], "깐마늘": ["마늘"], "다진파": ["대파", "파"], "송송썬파": ["대파", "파"] };
 const BASIC_INGS = ["밥", "쌀", "물", "공기밥", "즉석밥", "찬밥"];
+// 고기 부위: 레시피가 '돼지고기'처럼 종류만 말하면 어느 부위든 짝지음, '목살'처럼 부위를 말하면 그 부위만
+const MEAT_PARTS = {
+  돼지고기: ["목살", "삼겹살", "오겹살", "앞다리", "앞다리살", "뒷다리", "뒷다리살", "갈비살(돼지)", "돼지갈비", "등갈비", "항정살", "가브리살",
+    "등심(돼지)", "안심(돼지)", "사태(돼지)", "다짐육(돼지)", "돼지다짐육", "돼지고기다짐육", "대패삼겹살", "수육용"],
+  닭고기: ["닭다리살", "닭가슴살", "닭다리", "닭날개", "닭봉", "닭안심", "백숙용", "백숙용닭", "닭볶음탕용", "통닭", "생닭"],
+  소고기: ["부채살", "채끝", "국거리", "국거리(소)", "갈비살(소)", "소갈비", "등심", "안심", "양지", "사태", "우둔", "홍두깨", "차돌박이",
+    "불고기용", "다짐육(소)", "소다짐육", "치마살", "살치살", "토시살", "장조림용"]
+};
+const MEAT_GENERIC = { 돼지고기: "돼지고기", 돼지: "돼지고기", 닭고기: "닭고기", 닭: "닭고기", 소고기: "소고기", 쇠고기: "소고기", 한우: "소고기" };
+const MEAT_PART_SET = Object.fromEntries(Object.entries(MEAT_PARTS).map(([k, v]) => [k, new Set(v.map(x => normName(x)))]));
 // 조미료 이름인지 (간장·국간장·고추장·참기름·꽃소금 …) → 주재료가 아니라 양념으로 취급
 // 레시피용 조미료 이름: 식자재 분류 사전(카레 제외) + 레시피에 자주 나오는 양념
 const SEASONING_WORDS = [...CAT_HINTS.find(([c]) => c === "양념·소스")[1].filter(w => w !== "카레" && w !== "마요"),
@@ -1141,6 +1203,14 @@ function findItem(ingName, list) {
     const part = list.find(it => it.category !== "양념·소스" && namesOf(it).some(x =>
       words(x).some(w => w === n) || words(nm).some(w => w === normName(x))));
     if (part) return part;
+    // 고기 종류(돼지고기·닭고기·소고기) → 그 종류의 부위 품목
+    const kind = MEAT_GENERIC[n];
+    if (kind) {
+      const parts = MEAT_PART_SET[kind];
+      const meat = list.find(it => it.category === "육류·생선" && namesOf(it).some(x =>
+        parts.has(normName(x)) || words(x).some(w => parts.has(normName(w)))));
+      if (meat) return meat;
+    }
   }
   return null;
 }
@@ -1192,6 +1262,7 @@ function buildMenuPrompt(list, people, req) {
 5. 구분 '임박': ★ 표시(유통기한 지남·임박) 재료를 꼭 쓰는 메뉴 3~5개. 유통기한이 지난 재료를 쓰면 요약에 '상태 확인'이라고 적어 줘. ★가 없으면 '임박'은 빼도 돼.
 6. 같은 메뉴가 두 구분에 다 들어가도 돼.
 7. 주재료는 목록의 이름(괄호가 있으면 괄호 앞 대표 이름) 그대로, 양과 함께 쉼표로 나눠 줘. 예: 두부 1모, 대파 1/2대
+   고기는 목록에 적힌 부위 이름 그대로 (예: 목살 300g). 부위 상관없는 요리면 돼지고기·닭고기·소고기라고 써도 돼.
 8. 요약은 조리 순서를 한두 문장으로만.
 9. 아래 [형식] 그대로, 다른 설명 없이 코드 블록 하나로만 답해 줘.
 
@@ -1363,6 +1434,7 @@ function buildMinePrompt() {
 - 아래 [형식] 그대로, 레시피마다 [멍꼬북레시피] 블록 하나씩, 다른 설명 없이 코드 블록 하나로만 답해 줘.
 - 메뉴: 짧은 요리 이름.
 - 주재료: 조미료를 뺀 재료를 대표 이름(일반 재료 이름, 예: 두툼한 사각어묵 → 어묵)과 양으로, 쉼표로 나눠 줘. 예: 두부 1모, 대파 1/2대
+  고기는 부위가 정해져 있으면 부위로 (예: 목살, 닭가슴살, 부채살), 아무 부위나 되면 돼지고기·닭고기·소고기.
 - 양념: 간장·소금·설탕·고춧가루·고추장·된장·참기름·식용유·식초·깨·맛술 같은 조미료는 주재료가 아니라 여기에 양과 함께 적어 줘. 파·마늘은 양념이 아니라 주재료로 적어 줘.
 - 양을 안 적은 재료는 이름만 적어 줘. 짐작해서 채우지 마.
 - 인분: 숫자만. 모르면 비워 둬.
@@ -1737,6 +1809,8 @@ const STORE_TIPS = {
 const ITEM_RULES = `- 대표 이름: 요리할 때 부르는 일반 재료 이름 하나로 줄여 줘. 예: 두툼한 사각어묵 → 어묵, 국산 깐마늘 → 마늘, 한돈 앞다리살 구이용 → 돼지고기, 서울우유 1L → 우유.
   확실하지 않으면 후보를 / 로 나눠 적어 줘. 예: 어묵/유부
   조미료의 대표 이름은 조미료 이름 그대로 적어 줘. 예: 새우젓 → 새우젓, 레몬즙 → 레몬즙 (새우·레몬으로 줄이지 않기)
+  고기의 대표 이름은 부위로 적어 줘. 돼지고기 → 목살·삼겹살·앞다리·갈비살(돼지) 등, 닭고기 → 닭다리살·닭가슴살·백숙용 닭 등,
+  소고기 → 부채살·채끝·국거리(소)·갈비살(소) 등. 부위를 알 수 없으면 돼지고기·닭고기·소고기.
 - 품목명: 상품 이름을 짧게 (브랜드는 메모 칸으로).
 - 분류: 신선채소 / 육류·생선 / 유제품·계란 / 두부·가공식품 / 양념·소스 / 기타 중 하나
 - 보관: 냉장 / 냉동 / 실온 중 하나
