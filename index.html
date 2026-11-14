@@ -14,7 +14,7 @@
 <title>우리집 냉장고</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
   :root{
     /* 냉장고 법랑 흰색 · 푸른 회색 글자 · 냉장고 파랑 · 토마토 빨강 · 마스킹테이프 노랑 */
@@ -27,7 +27,7 @@
   .num{font-variant-numeric:tabular-nums}
 
   header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:14px 16px 10px;padding-top:calc(14px + env(safe-area-inset-top));display:flex;justify-content:space-between;align-items:baseline}
-  header h1{font-size:19px;font-weight:700;letter-spacing:-.3px;margin:0}
+  header h1{font-size:19px;font-weight:600;letter-spacing:-.3px;margin:0}
   header button{background:none;border:none;color:var(--sub);font-size:14px;padding:4px 0}
   nav.tabs{display:flex;gap:20px;padding:0 16px;background:var(--bg);border-bottom:1px solid var(--line)}
   nav.tabs button{padding:10px 0;border:none;background:none;font-size:15px;color:var(--sub);border-bottom:2px solid transparent;margin-bottom:-1px}
@@ -109,6 +109,7 @@
   .hidden{display:none!important}
   .check{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--sub);margin-top:14px}
   .check input{width:auto}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
   .qrow{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px}
   .qrow .inline{margin-top:6px}
   button.linkbtn{border:none;background:none;padding:4px}
@@ -493,20 +494,20 @@ function rowHtml(it, right = "qty") {
   return `<div class="item">
     <button class="item-main" data-act="toggle" data-id="${esc(it.id)}" aria-expanded="${open}">
       <span class="item-name">${esc(it.name)}</span>${tag}
-      ${es && right !== "dday" ? `<span class="tape ${es}">${ddayText(it)}</span>` : ""}
+      ${es && right !== "dday" ? `<span class="tape ${es}">${ddayText(it)}${it.expiryEstimated ? " (추정)" : ""}</span>` : ""}
       ${estTag}<span class="item-qty ${right === "dday" ? es : ""}">${esc(rightTxt)}</span>
     </button>
-    <div class="item-act"><button class="mini fill" data-act="use" data-id="${it.id}">사용</button></div>
+    <div class="item-act"><button class="mini fill" data-act="use" data-id="${esc(it.id)}">사용</button></div>
     ${open ? `<div class="item-detail">
       <dl>
         <dt>유통기한</dt><dd>${expiryHtml(it)}</dd>
         <dt>용량</dt><dd>${esc(volumeText(it))}</dd>
-        <dt>알림</dt><dd>${it.alertDays ?? 7}일 전부터 임박</dd>
+        <dt>알림</dt><dd>${esc(it.alertDays ?? 7)}일 전부터 임박</dd>
         <dt>분류</dt><dd>${esc(it.category)}, ${esc(it.storage)} 보관</dd>
         ${it.memo ? `<dt>메모</dt><dd>${esc(it.memo)}</dd>` : ""}
       </dl>
       <div class="bar"><div style="width:${pct}%"></div></div>
-      <div class="btns"><button class="mini" data-act="edit" data-id="${it.id}">수정</button></div>
+      <div class="btns"><button class="mini" data-act="edit" data-id="${esc(it.id)}">수정</button></div>
     </div>` : ""}
   </div>`;
 }
@@ -515,8 +516,8 @@ function usedRowHtml(it) {
   return `<div class="item used">
     <div class="item-main" style="cursor:default"><span class="item-name">${esc(it.name)}</span></div>
     <div class="item-act">
-      <button class="mini" data-act="edit" data-id="${it.id}">다시 채우기</button>
-      <button class="mini danger" data-act="purge" data-id="${it.id}">삭제</button>
+      <button class="mini" data-act="edit" data-id="${esc(it.id)}">다시 채우기</button>
+      <button class="mini danger" data-act="purge" data-id="${esc(it.id)}">삭제</button>
     </div>
   </div>`;
 }
@@ -614,6 +615,18 @@ document.addEventListener("click", async e => {
   }
 });
 
+// ===== 저장 전 값 검사 (직접 추가·일괄 저장 공통) =====
+function checkItem({ name, amount, qtyType, category, storage }) {
+  const n = String(name || "").trim();
+  if (!n) return "품목명을 입력해 주세요.";
+  if (n.length > 40) return `품목명이 너무 깁니다 (40자 이하).\n${n.slice(0, 40)}…`;
+  if (amount === "" || amount == null || isNaN(Number(amount)) || Number(amount) < 0) return `'${n}'의 수량을 숫자로 입력해 주세요.`;
+  if (qtyType === "percent" && Number(amount) > 100) return `'${n}'의 비율은 100% 이하로 입력해 주세요.`;
+  if (Number(amount) > 100000) return `'${n}'의 수량(${amount})이 너무 큽니다. 확인해 주세요.`;
+  if (!CATS.includes(category) || !["냉장", "냉동", "실온"].includes(storage)) return `'${n}'의 분류나 보관 장소를 골라 주세요.`;
+  return "";
+}
+
 // ===== 추가/수정 창 =====
 function updateFormUnits() {
   const t = $("f_qtyType").value;
@@ -671,10 +684,10 @@ $("f_estBtn").onclick = () => {
 
 $("f_save").onclick = async () => {
   const name = $("f_name").value.trim();
-  if (!name) { alert("품목명을 입력해 주세요."); return; }
   const amountRaw = $("f_amount").value;
   const amount = Number(amountRaw);
-  if (amountRaw === "" || isNaN(amount) || amount < 0) { alert("수량을 숫자로 입력해 주세요."); return; }
+  const err = checkItem({ name, amount: amountRaw, qtyType: $("f_qtyType").value, category: $("f_category").value, storage: $("f_storage").value });
+  if (err) { alert(err); return; }
   const category = $("f_category").value;
   const storage = $("f_storage").value;
   const qtyType = $("f_qtyType").value;
@@ -842,7 +855,7 @@ function convertQty(name, category, num, unit) {
   const notes = [];
   if (num == null) notes.push("수량이 없어 1개로 넣었습니다");
   const W = { "g":1, "그램":1, "kg":1000, "킬로":1000, "킬로그램":1000, "ml":1, "l":1000, "리터":1000 };
-  if (unit in W) {
+  if (Object.hasOwn(W, unit)) {
     qtyType = "weight"; amount = amount * W[unit];
     if (["ml", "l", "리터"].includes(unit)) notes.push("부피(ml)를 g으로 대략 바꿨습니다 (추정)");
   } else if (unit === "근") {
@@ -946,7 +959,7 @@ function parseTableRow(cells, rawLine) {
   let storage = normStorage(stCell);
   if (!storage) { storage = guessStorage(name); notes.push("보관 장소를 추측했습니다"); }
   const qm = String(qtyCell).replace(/,/g, "").match(/(\d+(?:\.\d+)?)\s*([^\d\s]*)/);
-  let num = qm ? Number(qm[1]) : null;
+  let num = qm ? Number(qm[1]) : (NUM[String(qtyCell).trim()] ?? null);   // "두"처럼 한글 수량도 인식
   let unit = (String(unitCell).trim() || (qm ? qm[2] : "")).toLowerCase();
   // "팩(300g)"처럼 단위 안에 무게가 있으면 무게로 계산
   const wm = unit.match(/(\d+(?:\.\d+)?)\s*(kg|g|ml|l)\b/);
@@ -955,9 +968,11 @@ function parseTableRow(cells, rawLine) {
   notes.push(...q.notes);
   const ex = normDate(expCell);
   if (ex.bad) notes.push(`유통기한 '${String(expCell).trim()}'을(를) 읽지 못해 비웠습니다`);
+  const expiryEst = !!ex.date && /추정|예상|약/.test(expCell);
+  if (expiryEst) notes.push("Claude가 짐작한 유통기한이라 '추정'으로 저장합니다");
   return {
     raw: rawLine, name, category, storage, qtyType: q.qtyType, amount: q.amount,
-    expiry: ex.date, memo: memoCells.join(" ").trim(), note: notes.join(" / ")
+    expiry: ex.date, expiryEst, memo: memoCells.join(" ").trim(), note: notes.join(" / ")
   };
 }
 
@@ -973,9 +988,10 @@ function parsePasted(text) {
     const pm = line.match(/^\**\s*구매일\s*\**\s*[:：]\s*(.*)$/);
     if (pm) { purchasedAt = normDate(pm[1]).date; continue; }
     if (line.includes("|")) {
-      const cells = line.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+      const cells = line.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.replace(/\*\*/g, "").trim());
       if (cells.every(c => /^:?-{2,}:?$/.test(c) || c === "")) continue; // 표 구분선
-      if (/^(품목명?|이름)$/.test(cells[0])) continue;                         // 제목 줄
+      if (/^(품목\s*명?|품목\s*이름|상품\s*명|이름)$/.test(cells[0])) continue;   // 제목 줄
+      if (/^(소계|합계|총계|총)$/.test(cells[0])) continue;                       // 합계 줄
       if (!cells[0] || /^(\(|예[:)])/.test(cells[0])) continue;      // 빈 줄·안내 줄
       rows.push(parseTableRow(cells, line));
     } else {
@@ -984,7 +1000,7 @@ function parsePasted(text) {
   }
   // 표 형식이 하나도 없으면 빠른 입력처럼 자유 문장으로 해석
   if (!rows.length && others.length) {
-    const isChat = l => /[.!?:]$|니다|세요|해요/.test(l) && !/\d/.test(l);
+    const isChat = l => /니다|세요|해요|했어요/.test(l) || (/[.!?:]$/.test(l) && !/\d/.test(l));
     return { source, purchasedAt, rows: parseText(others.filter(l => !isChat(l)).join("\n")), skipped: others.filter(isChat) };
   }
   return { source, purchasedAt, rows, skipped: others };
@@ -1098,6 +1114,10 @@ $("p_clip").onclick = async () => {
 $("p_parse").onclick = () => {
   const text = $("p_text").value.trim();
   if (!text) { alert("Claude가 정리한 결과를 붙여넣어 주세요."); return; }
+  if (text.includes("[형식]") || text.includes("YYYY-MM-DD")) {
+    alert("요청문이 붙여넣어졌습니다.\n요청문은 Claude 채팅에 보내고, Claude의 답변을 복사해서 여기에 붙여넣어 주세요.");
+    return;
+  }
   const r = parsePasted(text);
   if (!r.rows.length) { alert("식자재를 찾지 못했습니다. 형식을 확인해 주세요."); return; }
   goConfirm(r.rows, r.source || $("p_store").value, r.purchasedAt, r.skipped);
@@ -1118,13 +1138,9 @@ $("q_save").onclick = async () => {
   readQRows();
   if (!qRows.length) { alert("저장할 품목이 없습니다."); return; }
   for (const r of qRows) {
-    const a = Number(r.amount);
     if (!String(r.name).trim()) { alert(`품목명이 비어 있는 줄이 있습니다.\n(입력: ${r.raw})`); return; }
-    if (r.amount === "" || isNaN(a) || a < 0) { alert(`'${r.name}'의 수량을 숫자로 입력해 주세요.`); return; }
-    if (String(r.name).trim().length > 40) { alert(`품목명이 너무 깁니다 (40자 이하).\n${String(r.name).slice(0, 40)}…`); return; }
-    if (r.qtyType === "percent" && a > 100) { alert(`'${r.name}'의 비율은 100% 이하로 입력해 주세요.`); return; }
-    if (a > 100000) { alert(`'${r.name}'의 수량(${a})이 너무 큽니다. 확인해 주세요.`); return; }
-    if (!CATS.includes(r.category) || !["냉장", "냉동", "실온"].includes(r.storage)) { alert(`'${r.name}'의 분류나 보관 장소를 골라 주세요.`); return; }
+    const err = checkItem(r);
+    if (err) { alert(err); return; }
   }
   const source = $("q_source").value;
   const purchasedAt = $("q_purchasedAt").value || todayStr();
@@ -1139,7 +1155,7 @@ $("q_save").onclick = async () => {
       amount, initialAmount: amount,
       gramsPerServing: isWeight ? (GPS[r.category] || 100) : null,
       servingEstimated: isWeight,
-      expiry, expiryEstimated: !r.expiry,
+      expiry, expiryEstimated: !r.expiry || !!r.expiryEst,
       alertDays: calcAlertDays(r.category, purchasedAt, expiry),
       source, purchasedAt,
       memo: [String(r.memo || "").trim(), qMode === "quick" ? `입력: ${r.raw}` : ""].filter(Boolean).join(" / "),
