@@ -608,6 +608,8 @@ function amountText(it) {
   const gps = Number(it.gramsPerServing) || 0;
   return gps ? `${a}g (약 ${round1(a / gps)}인분)` : `${a}g`;
 }
+// 화면에 보여 줄 이름: 대표 이름이 있으면 대표 이름, 없으면 품목명 (품목명은 자세히 보기에서)
+const dispName = it => String(it?.baseName || "").trim() || it?.name || "";
 const who = () => (currentUser && (currentUser.displayName || currentUser.email)) || "알 수 없음";
 
 // ===== 상태 =====
@@ -716,7 +718,7 @@ function render() { renderItems(); renderExpiry(); renderMenus(); renderShop(); 
 function sortItems(arr) {
   return arr.slice().sort((a, b) =>
     (a.expiry || "9999-12-31").localeCompare(b.expiry || "9999-12-31") ||
-    String(a.name).localeCompare(String(b.name), "ko"));
+    dispName(a).localeCompare(dispName(b), "ko"));
 }
 
 function expState(it) {
@@ -765,13 +767,13 @@ function rowHtml(it, right = "qty", showStorage = false) {
     return `<div class="item ${on ? "selected" : ""}">
       <button class="item-main" data-act="select" data-id="${esc(it.id)}" aria-pressed="${on}">
         <span class="selbox ${on ? "on" : ""}">${on ? "✓" : ""}</span>
-        <span class="item-name">${esc(it.name)}</span>${tag}
+        <span class="item-name">${esc(dispName(it))}</span>${tag}
         <span class="item-qty">${esc(rightTxt)}</span>
       </button><div></div></div>`;
   }
   return `<div class="item">
     <button class="item-main" data-act="toggle" data-id="${esc(it.id)}" aria-expanded="${open}">
-      <span class="item-name">${esc(it.name)}</span>${tag}
+      <span class="item-name">${esc(dispName(it))}</span>${tag}
       ${es && right !== "dday" ? `<span class="tape ${es}">${ddayText(it)}${it.expiryEstimated ? " (추정)" : ""}</span>` : ""}
       ${estTag}<span class="item-qty ${right === "dday" ? es : ""}">${esc(rightTxt)}</span>
     </button>
@@ -781,7 +783,7 @@ function rowHtml(it, right = "qty", showStorage = false) {
         <dt>유통기한</dt><dd>${expiryHtml(it)}</dd>
         <dt>용량</dt><dd>${esc(volumeText(it))}</dd>
         <dt>알림</dt><dd>${esc(it.alertDays ?? 7)}일 전부터 임박</dd>
-        ${it.baseName && it.baseName !== it.name ? `<dt>대표 이름</dt><dd>${esc(it.baseName)}</dd>` : ""}
+        ${dispName(it) !== it.name ? `<dt>품목명</dt><dd>${esc(it.name)}</dd>` : ""}
         <dt>분류</dt><dd>${esc(it.category)}, ${esc(it.storage)} 보관</dd>
         ${it.memo ? `<dt>메모</dt><dd>${esc(it.memo)}</dd>` : ""}
       </dl>
@@ -796,12 +798,12 @@ function usedRowHtml(it) {
     const on = selectedIds.has(it.id);
     return `<div class="item used ${on ? "selected" : ""}">
       <button class="item-main" data-act="select" data-id="${esc(it.id)}" aria-pressed="${on}">
-        <span class="selbox ${on ? "on" : ""}">${on ? "✓" : ""}</span><span class="item-name">${esc(it.name)}</span>
+        <span class="selbox ${on ? "on" : ""}">${on ? "✓" : ""}</span><span class="item-name">${esc(dispName(it))}</span>
         <span class="item-qty">다 씀</span>
       </button><div></div></div>`;
   }
   return `<div class="item used">
-    <div class="item-main" style="cursor:default"><span class="item-name">${esc(it.name)}</span></div>
+    <div class="item-main" style="cursor:default"><span class="item-name">${esc(dispName(it))}</span></div>
     <div class="item-act">
       <button class="mini" data-act="edit" data-id="${esc(it.id)}">다시 채우기</button>
       <button class="mini danger" data-act="purge" data-id="${esc(it.id)}">삭제</button>
@@ -910,7 +912,7 @@ document.addEventListener("click", async e => {
   if (b.dataset.act === "use") openUse(it);
   if (b.dataset.act === "edit") openItemDialog(it);
   if (b.dataset.act === "purge") {
-    if (confirm(`'${it.name}'을(를) 완전히 삭제할까요?\n삭제하면 되돌릴 수 없습니다.`)) {
+    if (confirm(`'${dispName(it)}'(${it.name})을(를) 완전히 삭제할까요?\n삭제하면 되돌릴 수 없습니다.`)) {
       try { await deleteDoc(doc(db, "items", it.id)); } catch (err) { alert("삭제 실패: " + err.code); }
     }
   }
@@ -948,7 +950,7 @@ $("selAll").onclick = () => {
 $("selUsed").onclick = async () => {
   const list = items.filter(it => selectedIds.has(it.id) && it.status !== "다씀");
   if (!list.length) { alert("선택한 품목이 이미 모두 다 쓴 상태입니다."); return; }
-  const names = list.slice(0, 5).map(it => it.name).join(", ") + (list.length > 5 ? ` 외 ${list.length - 5}개` : "");
+  const names = list.slice(0, 5).map(dispName).join(", ") + (list.length > 5 ? ` 외 ${list.length - 5}개` : "");
   if (!confirm(`${list.length}개 품목을 다 쓴 것으로 처리할까요?\n${names}\n('다 쓴 품목 보기'에서 다시 채울 수 있습니다)`)) return;
   setSelectMode(false);
   try { await commitInChunks(list.map(it => b => b.update(doc(db, "items", it.id), { amount: 0, status: "다씀", updatedAt: serverTimestamp(), updatedBy: who() }))); }
@@ -957,7 +959,7 @@ $("selUsed").onclick = async () => {
 $("selPurge").onclick = async () => {
   const list = items.filter(it => selectedIds.has(it.id));
   if (!list.length) return;
-  const names = list.slice(0, 5).map(it => it.name).join(", ") + (list.length > 5 ? ` 외 ${list.length - 5}개` : "");
+  const names = list.slice(0, 5).map(dispName).join(", ") + (list.length > 5 ? ` 외 ${list.length - 5}개` : "");
   if (!confirm(`${list.length}개 품목을 완전히 삭제할까요?\n${names}\n\n삭제하면 되돌릴 수 없습니다. (다 쓴 것이면 [다 씀 처리]를 권합니다)`)) return;
   setSelectMode(false);
   try { await commitInChunks(list.map(it => b => b.delete(doc(db, "items", it.id)))); }
@@ -1280,7 +1282,7 @@ function shoppingHistory(list, limit = 15) {
     if (!it.purchasedAt) continue;
     const k = it.purchasedAt + "|" + (it.source || "기타");
     if (!g.has(k)) g.set(k, { date: it.purchasedAt, source: it.source || "기타", names: [] });
-    g.get(k).names.push(it.name);
+    g.get(k).names.push(dispName(it));
   }
   return [...g.values()].sort((a, b) => b.date.localeCompare(a.date) || a.source.localeCompare(b.source, "ko")).slice(0, limit);
 }
@@ -1337,7 +1339,7 @@ function planCook(rec, list) {
       const take = round1(Math.min(cur, need));
       need = round1(need - take);
       used.add(item.id);
-      rows.push({ itemId: item.id, name: item.name, ing: ingText, qtyType: item.qtyType, current: cur,
+      rows.push({ itemId: item.id, name: dispName(item), full: item.name, ing: ingText, qtyType: item.qtyType, current: cur,
         deduct: take, include: item.qtyType !== "stock", sea: false });
     });
     if (need > 0 && rows.length) rows[rows.length - 1].short = need;   // 냉장고에 있는 것보다 레시피가 많을 때
@@ -1347,7 +1349,7 @@ function planCook(rec, list) {
     const item = ownedSeasoning(g.name, seaItems, used);
     if (!item) continue;
     used.add(item.id);
-    rows.push({ itemId: item.id, name: item.name, ing: g.name + (g.qty ? " " + g.qty : ""), qtyType: item.qtyType, current: Number(item.amount) || 0,
+    rows.push({ itemId: item.id, name: dispName(item), full: item.name, ing: g.name + (g.qty ? " " + g.qty : ""), qtyType: item.qtyType, current: Number(item.amount) || 0,
       deduct: defaultDeduct(item, g.qty, true), include: false, sea: true });
   }
   return { rows, missing: an.missing.map(g => ({ name: g.name, qty: g.qty || "" })) };
@@ -1586,10 +1588,10 @@ function updateUsePreview() {
 function openUse(it) {
   usingId = it.id;
   if (it.qtyType === "stock") {   // 양을 기록하지 않는 품목: 다 썼을 때만 처리
-    if (confirm(`'${it.name}'을(를) 다 쓴 것으로 처리할까요?\n(양을 기록하지 않는 품목입니다)`)) applyUse(0);
+    if (confirm(`'${dispName(it)}'을(를) 다 쓴 것으로 처리할까요?\n(양을 기록하지 않는 품목입니다)`)) applyUse(0);
     return;
   }
-  $("u_title").textContent = `${it.name} 사용`;
+  $("u_title").textContent = `${dispName(it)} 사용` + (dispName(it) !== it.name ? ` (${it.name})` : "");
   $("u_current").textContent = "현재: " + amountText(it);
   const units = it.qtyType === "count" ? ["개"] : (it.qtyType === "percent" ? ["%"] : ["인분", "g"]);
   $("u_unit").innerHTML = units.map(u => `<option>${u}</option>`).join("");
@@ -1630,7 +1632,7 @@ $("u_ok").onclick = () => {
 };
 $("u_all").onclick = () => {
   const it = items.find(i => i.id === usingId);
-  if (it && confirm(`'${it.name}'을(를) 전부 사용한 것으로 처리할까요?`)) applyUse(0);
+  if (it && confirm(`'${dispName(it)}'을(를) 전부 사용한 것으로 처리할까요?`)) applyUse(0);
 };
 
 // ===== 빠른 입력: 해석 =====
@@ -2344,7 +2346,7 @@ function cookRowHtml(r, i) {
   const fake = { qtyType: r.qtyType, amount: r.current };
   return `<div class="ckrow" data-ci="${i}">
     <input type="checkbox" data-cf="include" ${r.include ? "checked" : ""} ${r.qtyType === "stock" ? "disabled" : ""} aria-label="${esc(r.name)} 빼기">
-    <div><b>${esc(r.name)}</b>${r.sea ? ' <span class="item-tag">조미료</span>' : ""}</div>
+    <div><b>${esc(r.name)}</b>${r.full && r.full !== r.name ? ` <span class="item-tag">${esc(r.full)}</span>` : ""}${r.sea ? ' <span class="item-tag">조미료</span>' : ""}</div>
     <div class="ckamt">${r.qtyType === "stock" ? '<span class="meta">양 기록 안 함</span>'
       : `<input type="number" inputmode="decimal" min="0" step="any" data-cf="deduct" value="${esc(r.deduct)}"><span>${unitOf(r.qtyType)}</span>`}</div>
     <p class="meta">레시피: ${esc(r.ing)}${r.short ? ` <span class="ing-miss">(${esc(amountText({ qtyType: r.qtyType, amount: r.short }).replace(/ \(.*\)$/, ""))} 부족)</span>` : ""} · 지금 ${esc(amountText(fake))}${r.qtyType === "stock" ? "" : ` → <span data-left>${r.include ? `남음 ${esc(amountText({ ...fake, amount: left }))}${left === 0 ? " (다 씀)" : ""}` : "빼지 않음"}</span>`}</p>
