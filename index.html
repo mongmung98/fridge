@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2f7d5b">
+<title>우리집 냉장고</title>
+<style>
+  :root{--bg:#f6f7f9;--card:#fff;--text:#222;--sub:#666;--line:#e3e5e8;--main:#2f7d5b;--red:#d93838;--yellow:#c48a00;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;background:var(--bg);color:var(--text);font-size:16px}
+  header{position:sticky;top:0;background:var(--main);color:#fff;padding:12px 16px;padding-top:calc(12px + env(safe-area-inset-top));display:flex;justify-content:space-between;align-items:center;z-index:5}
+  header h1{font-size:18px;margin:0}
+  header button{background:transparent;border:1px solid #fff;color:#fff;border-radius:6px;padding:4px 10px;font-size:13px}
+  nav.tabs{display:flex;background:#fff;border-bottom:1px solid var(--line)}
+  nav.tabs button{flex:1;padding:12px;border:none;background:none;font-size:15px;color:var(--sub);border-bottom:3px solid transparent}
+  nav.tabs button.on{color:var(--main);border-bottom-color:var(--main);font-weight:bold}
+  main{padding:12px 12px 100px;max-width:720px;margin:0 auto}
+  .chips{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+  .chip{border:1px solid var(--line);background:#fff;border-radius:16px;padding:6px 12px;font-size:14px;color:var(--text)}
+  .chip.on{background:var(--main);color:#fff;border-color:var(--main)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:8px}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .name{font-weight:bold;font-size:17px}
+  .meta{color:var(--sub);font-size:13px;margin-top:4px}
+  .badge{display:inline-block;font-size:12px;padding:2px 6px;border-radius:4px;background:#eef0f2;color:#444;margin-left:4px}
+  .est{background:#fff4d6;color:#8a6200}
+  .exp-over{color:var(--red);font-weight:bold}
+  .exp-soon{color:var(--yellow);font-weight:bold}
+  .btns{display:flex;gap:6px;margin-top:8px;align-items:center}
+  button{font-family:inherit;cursor:pointer}
+  .btns button,.primary,.secondary{padding:8px 12px;border-radius:6px;font-size:14px;border:1px solid var(--line);background:#fff;color:var(--text)}
+  .primary{background:var(--main)!important;color:#fff!important;border-color:var(--main)!important}
+  .danger{color:var(--red)!important}
+  .bar{height:6px;background:#eef0f2;border-radius:3px;margin-top:6px;overflow:hidden}
+  .bar>div{height:100%;background:var(--main)}
+  .fab{position:fixed;right:20px;bottom:calc(24px + env(safe-area-inset-bottom));width:56px;height:56px;border-radius:50%;background:var(--main);color:#fff;font-size:30px;border:none;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+  h2.group{font-size:15px;margin:18px 4px 8px}
+  dialog{border:none;border-radius:12px;padding:16px;width:min(92vw,440px);max-height:90vh;overflow:auto}
+  dialog::backdrop{background:rgba(0,0,0,.4)}
+  dialog h3{margin:0 0 8px}
+  label{display:block;font-size:13px;color:var(--sub);margin:10px 0 4px}
+  input,select{width:100%;padding:9px;font-size:16px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--text);font-family:inherit}
+  .inline{display:flex;gap:8px;align-items:flex-end}
+  .inline>*{flex:1}
+  .hint{font-size:12px;color:#8a6200;margin-top:4px}
+  .center{text-align:center;padding:40px 16px}
+  .hidden{display:none!important}
+  .status{font-size:12px;color:var(--sub);text-align:center;margin:0 0 8px}
+  .check{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--sub);margin-top:12px}
+  .check input{width:auto}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🧊 우리집 냉장고</h1>
+  <button id="logoutBtn" class="hidden">로그아웃</button>
+</header>
+
+<section id="loadingView" class="center">
+  <p class="meta">불러오는 중…</p>
+</section>
+
+<section id="loginView" class="center hidden">
+  <p>가족 구글 계정으로 로그인해 주세요.</p>
+  <button id="loginBtn" class="primary" style="padding:12px 20px;border-radius:8px;font-size:16px">구글로 로그인</button>
+  <p id="loginMsg" class="meta"></p>
+</section>
+
+<section id="deniedView" class="center hidden">
+  <p><b>접근 권한이 없습니다.</b></p>
+  <p class="meta" id="deniedEmail"></p>
+  <p class="meta">등록된 가족 계정으로 다시 로그인해 주세요.</p>
+</section>
+
+<div id="appView" class="hidden">
+  <nav class="tabs">
+    <button data-tab="items" class="on">식자재</button>
+    <button data-tab="expiry" id="expiryTabBtn">유통기한 관리</button>
+  </nav>
+  <main>
+    <p class="status" id="syncStatus"></p>
+
+    <div id="itemsTab">
+      <div class="chips" id="storageChips">
+        <button class="chip on" data-st="전체">전체</button>
+        <button class="chip" data-st="냉장">냉장</button>
+        <button class="chip" data-st="냉동">냉동</button>
+        <button class="chip" data-st="실온">실온</button>
+      </div>
+      <input id="searchBox" placeholder="품목 검색" style="margin-bottom:10px">
+      <div id="itemList"></div>
+      <label class="check"><input type="checkbox" id="showUsed"> 다 쓴 품목 보기</label>
+    </div>
+
+    <div id="expiryTab" class="hidden">
+      <div id="expiryList"></div>
+    </div>
+  </main>
+  <button class="fab" id="addBtn" aria-label="식자재 추가">+</button>
+</div>
+
+<!-- 식자재 추가/수정 창 -->
+<dialog id="itemDialog">
+  <h3 id="itemDialogTitle">식자재 추가</h3>
+  <label>품목명</label>
+  <input id="f_name" placeholder="예: 대파">
+  <div class="inline">
+    <div><label>분류</label>
+      <select id="f_category">
+        <option>신선채소</option><option>육류·생선</option><option>유제품·계란</option>
+        <option>두부·가공식품</option><option>양념·소스</option><option>기타</option>
+      </select></div>
+    <div><label>보관 장소</label>
+      <select id="f_storage"><option>냉장</option><option>냉동</option><option>실온</option></select></div>
+  </div>
+  <div class="inline">
+    <div><label>수량 방식</label>
+      <select id="f_qtyType">
+        <option value="weight">무게 (g)</option>
+        <option value="count">개수 (개)</option>
+        <option value="percent">비율 (%)</option>
+      </select></div>
+    <div><label id="f_amountLabel">현재 수량 (g)</label>
+      <input id="f_amount" type="number" inputmode="decimal" min="0" step="any"></div>
+  </div>
+  <div id="f_gpsWrap">
+    <label>1인분 기준 (g)</label>
+    <input id="f_gps" type="number" inputmode="decimal" min="0" step="any">
+    <div class="hint" id="f_gpsHint"></div>
+  </div>
+  <label>유통기한</label>
+  <div class="inline">
+    <input id="f_expiry" type="date">
+    <button type="button" class="secondary" id="f_estBtn" style="flex:0 0 auto">추정값 넣기</button>
+  </div>
+  <div class="hint" id="f_expHint"></div>
+  <div class="inline">
+    <div><label>구매처</label>
+      <select id="f_source"><option>네이버</option><option>컬리</option><option>이마트몰</option><option>시장</option><option>기타</option></select></div>
+    <div><label>구매일</label><input id="f_purchasedAt" type="date"></div>
+  </div>
+  <label>메모</label>
+  <input id="f_memo" placeholder="예: 3등분해서 냉동">
+  <div class="btns" style="justify-content:space-between;margin-top:16px">
+    <button type="button" id="f_done" class="danger">다 씀 처리</button>
+    <div style="display:flex;gap:6px">
+      <button type="button" id="f_cancel">취소</button>
+      <button type="button" class="primary" id="f_save">저장</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- 사용(차감) 창 -->
+<dialog id="useDialog">
+  <h3 id="u_title"></h3>
+  <p class="meta" id="u_current"></p>
+  <div class="chips" id="u_quick"></div>
+  <div class="inline">
+    <input id="u_value" type="number" inputmode="decimal" min="0" step="any" placeholder="사용량">
+    <select id="u_unit" style="flex:0 0 90px"></select>
+  </div>
+  <p class="meta" id="u_preview"></p>
+  <div class="btns" style="justify-content:space-between;margin-top:16px">
+    <button type="button" id="u_all" class="danger">전부 사용</button>
+    <div style="display:flex;gap:6px">
+      <button type="button" id="u_cancel">취소</button>
+      <button type="button" class="primary" id="u_ok">사용 처리</button>
+    </div>
+  </div>
+</dialog>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+// ===== Firebase 설정값 (공개되어도 되는 값) =====
+const firebaseConfig = {
+  apiKey: "AIzaSyDq2XsDQYOYm6rMCb7olO5F5wJ0wEdSt30",
+  authDomain: "mongmung-project.firebaseapp.com",
+  projectId: "mongmung-project",
+  storageBucket: "mongmung-project.firebasestorage.app",
+  messagingSenderId: "511586050848",
+  appId: "1:511586050848:web:ad83b12b277246097b6d45"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+});
+const itemsCol = collection(db, "items");
+
+// ===== 기본값 (일반적인 참고값 — 정확하지 않을 수 있음) =====
+// 분류·보관장소별 일반 보관 기간(일)
+const SHELF = {
+  "신선채소":     { "냉장": 7,   "냉동": 30,  "실온": 3 },
+  "육류·생선":    { "냉장": 2,   "냉동": 90,  "실온": 1 },
+  "유제품·계란":  { "냉장": 14,  "냉동": 30,  "실온": 1 },
+  "두부·가공식품":{ "냉장": 7,   "냉동": 30,  "실온": 30 },
+  "양념·소스":    { "냉장": 180, "냉동": 180, "실온": 180 },
+  "기타":         { "냉장": 14,  "냉동": 60,  "실온": 30 }
+};
+// 분류별 1인분 기준(g)
+const GPS = { "신선채소":100, "육류·생선":150, "유제품·계란":100, "두부·가공식품":100, "양념·소스":15, "기타":100 };
+
+// ===== 공통 도구 =====
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const round1 = n => Math.round(n * 10) / 10;
+const pad = n => String(n).padStart(2, "0");
+const fmtD = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const todayStr = () => fmtD(new Date());
+const parseD = s => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const addDays = (s, n) => { const d = parseD(s); d.setDate(d.getDate() + n); return fmtD(d); };
+const diffDays = (a, b) => Math.round((parseD(b) - parseD(a)) / 86400000);
+const daysLeft = exp => diffDays(todayStr(), exp);
+
+function calcAlertDays(category, baseDate, expiry) {
+  if (category === "신선채소") return 4;
+  return diffDays(baseDate, expiry) > 30 ? 30 : 7;
+}
+function estimateExpiry(category, storage, baseDate) {
+  const days = (SHELF[category] || SHELF["기타"])[storage] ?? 14;
+  return addDays(baseDate, days);
+}
+function amountText(it) {
+  const a = round1(Number(it.amount) || 0);
+  if (it.qtyType === "count") return `${a}개`;
+  if (it.qtyType === "percent") return `${a}%`;
+  const gps = Number(it.gramsPerServing) || 0;
+  return gps ? `${a}g (약 ${round1(a / gps)}인분)` : `${a}g`;
+}
+const who = () => (currentUser && (currentUser.displayName || currentUser.email)) || "알 수 없음";
+
+// ===== 상태 =====
+let items = [];
+let unsub = null;
+let currentUser = null;
+let storageFilter = "전체";
+let editingId = null;
+let usingId = null;
+let expEst = false;
+let gpsEst = false;
+
+function show(view) {
+  ["loadingView", "loginView", "deniedView", "appView"].forEach(v => $(v).classList.toggle("hidden", v !== view));
+  $("logoutBtn").classList.toggle("hidden", view === "loginView" || view === "loadingView");
+}
+
+// ===== 로그인 =====
+$("loginBtn").onclick = async () => {
+  const provider = new GoogleAuthProvider();
+  $("loginMsg").textContent = "";
+  try {
+    await signInWithPopup(auth, provider);
+  } catch (e) {
+    if (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment") {
+      await signInWithRedirect(auth, provider);
+    } else if (e.code !== "auth/popup-closed-by-user" && e.code !== "auth/cancelled-popup-request") {
+      $("loginMsg").textContent = "로그인 오류: " + e.code;
+    }
+  }
+};
+$("logoutBtn").onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, user => {
+  currentUser = user;
+  if (unsub) { unsub(); unsub = null; }
+  if (!user) { items = []; show("loginView"); return; }
+  show("loadingView");
+  unsub = onSnapshot(itemsCol, { includeMetadataChanges: true }, snap => {
+    items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    $("syncStatus").textContent = snap.metadata.hasPendingWrites
+      ? "⏳ 저장 중…"
+      : (snap.metadata.fromCache ? "📴 서버 연결 대기 중 (연결되면 자동 저장)" : "✅ 모든 변경 저장됨");
+    show("appView");
+    render();
+  }, err => {
+    if (err.code === "permission-denied") {
+      $("deniedEmail").textContent = user.email;
+      show("deniedView");
+    } else {
+      alert("데이터를 불러오지 못했습니다: " + err.code);
+    }
+  });
+});
+
+// ===== 화면 그리기 =====
+function render() { renderItems(); renderExpiry(); }
+
+function sortItems(arr) {
+  return arr.slice().sort((a, b) =>
+    (a.expiry || "9999-12-31").localeCompare(b.expiry || "9999-12-31") ||
+    String(a.name).localeCompare(String(b.name), "ko"));
+}
+
+function expiryHtml(it) {
+  if (!it.expiry) return '<span class="meta">유통기한 없음</span>';
+  const d = daysLeft(it.expiry);
+  const cls = d < 0 ? "exp-over" : (d <= (it.alertDays ?? 7) ? "exp-soon" : "");
+  const txt = d < 0 ? `${-d}일 지남` : (d === 0 ? "오늘까지" : `D-${d}`);
+  return `<span class="${cls}">${esc(it.expiry)} (${txt})</span>${it.expiryEstimated ? '<span class="badge est">추정</span>' : ""}`;
+}
+
+function cardHtml(it) {
+  const pct = it.initialAmount > 0 ? Math.max(0, Math.min(100, it.amount / it.initialAmount * 100)) : 0;
+  return `<div class="card">
+    <div class="row">
+      <div><span class="name">${esc(it.name)}</span><span class="badge">${esc(it.storage)}</span><span class="badge">${esc(it.category)}</span></div>
+      <div><b>${esc(amountText(it))}</b></div>
+    </div>
+    <div class="bar"><div style="width:${pct}%"></div></div>
+    <div class="meta">유통기한: ${expiryHtml(it)}</div>
+    ${it.memo ? `<div class="meta">메모: ${esc(it.memo)}</div>` : ""}
+    <div class="btns">
+      <button class="primary" data-act="use" data-id="${it.id}">사용</button>
+      <button data-act="edit" data-id="${it.id}">수정</button>
+    </div>
+  </div>`;
+}
+
+function usedCardHtml(it) {
+  return `<div class="card" style="opacity:.7">
+    <div class="row"><div><span class="name">${esc(it.name)}</span><span class="badge">다 씀</span></div></div>
+    <div class="btns">
+      <button data-act="edit" data-id="${it.id}">다시 채우기</button>
+      <button class="danger" data-act="purge" data-id="${it.id}">완전 삭제</button>
+    </div>
+  </div>`;
+}
+
+function renderItems() {
+  const q = $("searchBox").value.trim();
+  const list = items.filter(it =>
+    (storageFilter === "전체" || it.storage === storageFilter) &&
+    (!q || String(it.name || "").includes(q)));
+  const active = sortItems(list.filter(it => it.status !== "다씀"));
+  const used = sortItems(list.filter(it => it.status === "다씀"));
+  let html = active.length
+    ? active.map(cardHtml).join("")
+    : '<p class="center meta">등록된 식자재가 없습니다.<br>오른쪽 아래 + 버튼으로 추가하세요.</p>';
+  if ($("showUsed").checked) {
+    html += '<h2 class="group">다 쓴 품목</h2>' + (used.length ? used.map(usedCardHtml).join("") : '<p class="meta">없음</p>');
+  }
+  $("itemList").innerHTML = html;
+}
+
+function renderExpiry() {
+  const act = items.filter(it => it.status !== "다씀");
+  const over = [], soon = [], ok = [], none = [];
+  act.forEach(it => {
+    if (!it.expiry) return none.push(it);
+    const d = daysLeft(it.expiry);
+    if (d < 0) over.push(it);
+    else if (d <= (it.alertDays ?? 7)) soon.push(it);
+    else ok.push(it);
+  });
+  const card = it => `<div class="card">
+      <div class="row"><div><span class="name">${esc(it.name)}</span><span class="badge">${esc(it.storage)}</span></div><div>${esc(amountText(it))}</div></div>
+      <div class="meta">${expiryHtml(it)} · 알림 기준 ${it.alertDays ?? 7}일 전</div>
+      <div class="btns">
+        <button class="primary" data-act="use" data-id="${it.id}">사용</button>
+        <button data-act="edit" data-id="${it.id}">수정</button>
+      </div></div>`;
+  const sec = (title, arr) => `<h2 class="group">${title} (${arr.length})</h2>` +
+    (arr.length ? sortItems(arr).map(card).join("") : '<p class="meta">없음</p>');
+  $("expiryList").innerHTML =
+    sec("🔴 유통기한 지남", over) + sec("🟡 임박", soon) + sec("🟢 여유", ok) +
+    (none.length ? sec("유통기한 없음", none) : "");
+  const n = over.length + soon.length;
+  $("expiryTabBtn").textContent = n ? `유통기한 관리 (${n})` : "유통기한 관리";
+}
+
+// ===== 탭·필터 =====
+document.querySelectorAll("nav.tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav.tabs button").forEach(x => x.classList.toggle("on", x === b));
+  $("itemsTab").classList.toggle("hidden", b.dataset.tab !== "items");
+  $("expiryTab").classList.toggle("hidden", b.dataset.tab !== "expiry");
+});
+document.querySelectorAll("#storageChips .chip").forEach(c => c.onclick = () => {
+  storageFilter = c.dataset.st;
+  document.querySelectorAll("#storageChips .chip").forEach(x => x.classList.toggle("on", x === c));
+  renderItems();
+});
+$("searchBox").oninput = renderItems;
+$("showUsed").onchange = renderItems;
+
+// 카드 버튼 클릭 처리
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  const it = items.find(x => x.id === b.dataset.id);
+  if (!it) return;
+  if (b.dataset.act === "use") openUse(it);
+  if (b.dataset.act === "edit") openItemDialog(it);
+  if (b.dataset.act === "purge") {
+    if (confirm(`'${it.name}'을(를) 완전히 삭제할까요?\n삭제하면 되돌릴 수 없습니다.`)) {
+      try { await deleteDoc(doc(db, "items", it.id)); } catch (err) { alert("삭제 실패: " + err.code); }
+    }
+  }
+});
+
+// ===== 추가/수정 창 =====
+function updateFormUnits() {
+  const t = $("f_qtyType").value;
+  $("f_amountLabel").textContent = t === "count" ? "현재 수량 (개)" : (t === "percent" ? "현재 수량 (%)" : "현재 수량 (g)");
+  $("f_gpsWrap").classList.toggle("hidden", t !== "weight");
+  if (t === "percent" && $("f_amount").value === "") $("f_amount").value = 100;
+}
+function fillDefaultGps() {
+  if (gpsEst || $("f_gps").value === "") {
+    $("f_gps").value = GPS[$("f_category").value] || 100;
+    gpsEst = true;
+  }
+}
+function updateHints() {
+  $("f_gpsHint").textContent = gpsEst ? "추정값입니다. 실제 1인분 양에 맞게 고쳐 주세요." : "";
+  $("f_expHint").textContent = expEst
+    ? "⚠ 추정값: 분류와 보관 장소 기준의 일반적인 참고 기간입니다. 실제 상태를 꼭 확인하세요."
+    : ($("f_expiry").value ? "" : "비워 두면 저장할 때 추정값이 자동으로 들어갑니다.");
+}
+
+function openItemDialog(it) {
+  editingId = it ? it.id : null;
+  $("itemDialogTitle").textContent = it ? "식자재 수정" : "식자재 추가";
+  $("f_name").value = it?.name || "";
+  $("f_category").value = it?.category || "신선채소";
+  $("f_storage").value = it?.storage || "냉장";
+  $("f_qtyType").value = it?.qtyType || "weight";
+  $("f_amount").value = it ? (it.status === "다씀" ? "" : it.amount) : "";
+  $("f_gps").value = it?.gramsPerServing ?? "";
+  gpsEst = it ? !!it.servingEstimated : true;
+  $("f_expiry").value = it?.expiry || "";
+  expEst = it ? !!it.expiryEstimated : false;
+  $("f_source").value = it?.source || "시장";
+  $("f_purchasedAt").value = it?.purchasedAt || todayStr();
+  $("f_memo").value = it?.memo || "";
+  $("f_done").classList.toggle("hidden", !it || it.status === "다씀");
+  updateFormUnits();
+  if (!it) fillDefaultGps();
+  updateHints();
+  $("itemDialog").showModal();
+}
+
+$("addBtn").onclick = () => openItemDialog(null);
+$("f_cancel").onclick = () => $("itemDialog").close();
+$("f_qtyType").onchange = () => { updateFormUnits(); if ($("f_qtyType").value === "weight") fillDefaultGps(); updateHints(); };
+$("f_category").onchange = () => { fillDefaultGps(); updateHints(); };
+$("f_gps").oninput = () => { gpsEst = false; updateHints(); };
+$("f_expiry").oninput = () => { expEst = false; updateHints(); };
+$("f_estBtn").onclick = () => {
+  $("f_expiry").value = estimateExpiry($("f_category").value, $("f_storage").value, $("f_purchasedAt").value || todayStr());
+  expEst = true;
+  updateHints();
+};
+
+$("f_save").onclick = async () => {
+  const name = $("f_name").value.trim();
+  if (!name) { alert("품목명을 입력해 주세요."); return; }
+  const amountRaw = $("f_amount").value;
+  const amount = Number(amountRaw);
+  if (amountRaw === "" || isNaN(amount) || amount < 0) { alert("수량을 숫자로 입력해 주세요."); return; }
+  const category = $("f_category").value;
+  const storage = $("f_storage").value;
+  const qtyType = $("f_qtyType").value;
+  const purchasedAt = $("f_purchasedAt").value || todayStr();
+  let expiry = $("f_expiry").value;
+  let expiryEstimated = expEst;
+  if (!expiry) { expiry = estimateExpiry(category, storage, purchasedAt); expiryEstimated = true; }
+  let gramsPerServing = null, servingEstimated = false;
+  if (qtyType === "weight") {
+    const g = Number($("f_gps").value);
+    gramsPerServing = g > 0 ? g : (GPS[category] || 100);
+    servingEstimated = gpsEst || !(g > 0);
+  }
+  const data = {
+    name, category, storage, qtyType,
+    amount: round1(amount),
+    gramsPerServing, servingEstimated,
+    expiry, expiryEstimated,
+    alertDays: calcAlertDays(category, purchasedAt, expiry),
+    source: $("f_source").value,
+    purchasedAt,
+    memo: $("f_memo").value.trim(),
+    status: amount > 0 ? "보유" : "다씀",
+    updatedAt: serverTimestamp(),
+    updatedBy: who()
+  };
+  $("itemDialog").close();
+  try {
+    if (editingId) {
+      const old = items.find(i => i.id === editingId);
+      const sameType = old && old.qtyType === qtyType && old.status !== "다씀";
+      data.initialAmount = sameType ? Math.max(Number(old.initialAmount) || 0, data.amount) : data.amount;
+      await updateDoc(doc(db, "items", editingId), data);
+    } else {
+      data.initialAmount = data.amount;
+      data.createdAt = serverTimestamp();
+      await addDoc(itemsCol, data);
+    }
+  } catch (err) {
+    alert("저장 실패: " + err.code);
+  }
+};
+
+$("f_done").onclick = async () => {
+  if (!editingId) return;
+  const it = items.find(i => i.id === editingId);
+  if (!confirm(`'${it?.name}'을(를) 다 쓴 것으로 처리할까요?`)) return;
+  $("itemDialog").close();
+  try {
+    await updateDoc(doc(db, "items", editingId), { amount: 0, status: "다씀", updatedAt: serverTimestamp(), updatedBy: who() });
+  } catch (err) { alert("저장 실패: " + err.code); }
+};
+
+// ===== 사용(차감) 창 =====
+function deductAmount(it, v, unit) {
+  if (it.qtyType === "weight" && unit === "인분") return v * (Number(it.gramsPerServing) || 100);
+  return v;
+}
+function updateUsePreview() {
+  const it = items.find(i => i.id === usingId);
+  const v = Number($("u_value").value);
+  if (!it || !(v > 0)) { $("u_preview").textContent = ""; return; }
+  const left = Math.max(0, round1(it.amount - deductAmount(it, v, $("u_unit").value)));
+  $("u_preview").textContent = "사용 후 남는 양: " + amountText({ ...it, amount: left }) + (left === 0 ? " → 다 씀 처리" : "");
+}
+function openUse(it) {
+  usingId = it.id;
+  $("u_title").textContent = `${it.name} 사용`;
+  $("u_current").textContent = "현재: " + amountText(it);
+  const units = it.qtyType === "count" ? ["개"] : (it.qtyType === "percent" ? ["%"] : ["인분", "g"]);
+  $("u_unit").innerHTML = units.map(u => `<option>${u}</option>`).join("");
+  const quick = it.qtyType === "count" ? [[1, "개"], [2, "개"]]
+    : it.qtyType === "percent" ? [[10, "%"], [25, "%"], [50, "%"]]
+    : [[0.5, "인분"], [1, "인분"], [2, "인분"]];
+  $("u_quick").innerHTML = quick.map(([v, u]) => `<button type="button" class="chip" data-v="${v}" data-u="${u}">${v}${u}</button>`).join("");
+  $("u_quick").querySelectorAll("button").forEach(b => b.onclick = () => {
+    $("u_value").value = b.dataset.v;
+    $("u_unit").value = b.dataset.u;
+    updateUsePreview();
+  });
+  $("u_value").value = "";
+  $("u_preview").textContent = "";
+  $("useDialog").showModal();
+}
+$("u_value").oninput = updateUsePreview;
+$("u_unit").onchange = updateUsePreview;
+$("u_cancel").onclick = () => $("useDialog").close();
+
+async function applyUse(newAmount) {
+  const id = usingId;
+  $("useDialog").close();
+  try {
+    await updateDoc(doc(db, "items", id), {
+      amount: newAmount,
+      status: newAmount > 0 ? "보유" : "다씀",
+      updatedAt: serverTimestamp(),
+      updatedBy: who()
+    });
+  } catch (err) { alert("저장 실패: " + err.code); }
+}
+$("u_ok").onclick = () => {
+  const it = items.find(i => i.id === usingId);
+  const v = Number($("u_value").value);
+  if (!it || !(v > 0)) { alert("사용량을 입력해 주세요."); return; }
+  applyUse(Math.max(0, round1(it.amount - deductAmount(it, v, $("u_unit").value))));
+};
+$("u_all").onclick = () => {
+  const it = items.find(i => i.id === usingId);
+  if (it && confirm(`'${it.name}'을(를) 전부 사용한 것으로 처리할까요?`)) applyUse(0);
+};
+</script>
+</body>
+</html>
