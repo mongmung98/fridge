@@ -239,7 +239,6 @@
         <option value="weight">무게 (g)</option>
         <option value="count">개수 (개)</option>
         <option value="percent">비율 (%)</option>
-        <option value="stock">있음만 (양 기록 안 함)</option>
       </select></div>
     <div id="f_amountWrap"><label id="f_amountLabel">현재 수량 (g)</label>
       <input id="f_amount" type="number" inputmode="decimal" min="0" step="any"></div>
@@ -895,20 +894,21 @@ function restorePlan(parsed, currentIds, mode) {
 const RECIPE_TYPES = { mine: "멍꼬북", web: "인터넷", claude: "클로드" };
 const normName = s => String(s || "").replace(/[\s()（）\[\]]/g, "");
 // 다르게 부르는 같은 재료 / 늘 있다고 보는 재료
-const ALIASES = { "달걀": ["계란"], "계란": ["달걀"], "쇠고기": ["소고기"], "소고기": ["쇠고기"], "파": ["대파", "쪽파"] };
+const ALIASES = { "달걀": ["계란"], "계란": ["달걀"], "쇠고기": ["소고기"], "소고기": ["쇠고기"], "파": ["대파", "쪽파"],
+  "다진마늘": ["마늘"], "간마늘": ["마늘"], "깐마늘": ["마늘"], "다진파": ["대파", "파"], "송송썬파": ["대파", "파"] };
 const BASIC_INGS = ["밥", "쌀", "물", "공기밥", "즉석밥", "찬밥"];
 // 조미료 이름인지 (간장·국간장·고추장·참기름·꽃소금 …) → 주재료가 아니라 양념으로 취급
 // 레시피용 조미료 이름: 식자재 분류 사전(카레 제외) + 레시피에 자주 나오는 양념
 const SEASONING_WORDS = [...CAT_HINTS.find(([c]) => c === "양념·소스")[1].filter(w => w !== "카레" && w !== "마요"),
   "마요네즈", "깨", "참깨", "통깨", "깨소금", "들깨가루", "맛술", "미림", "청주", "요리술", "새우젓", "매실청", "매실액",
-  "카놀라유", "포도씨유", "해바라기유", "다진마늘", "다진생강", "생강가루", "치킨스톡", "연두", "꿀", "조청",
+  "카놀라유", "포도씨유", "해바라기유", "다진생강", "생강가루", "치킨스톡", "연두", "꿀", "조청",
   "전분", "감자전분", "부침가루", "튀김가루", "밀가루", "빵가루", "굴소스", "와사비", "겨자", "머스타드",
   "쯔유", "참치액", "해선장", "알룰로스", "레몬즙", "페퍼론치노", "핫소스", "라조유", "고추기름", "크러시드페퍼",
   "파프리카가루", "표고가루", "발사믹식초", "바베큐소스", "바비큐소스"];
 const seaItemsOf = list => activeItems(list).filter(it => it.category === "양념·소스");
 // 같은 조미료로 보는 이름 묶음 (첫 이름이 대표)
 const SEA_GROUPS = [["후추", "후춧가루", "통후추"], ["깨", "참깨", "통깨", "깨소금"], ["식용유", "카놀라유", "포도씨유", "해바라기유", "콩기름"],
-  ["맛술", "미림", "요리술"], ["마늘", "다진마늘", "간마늘"], ["간장", "양조간장", "진간장"], ["고춧가루", "고추가루"], ["케첩", "케찹"],
+  ["맛술", "미림", "요리술"], ["간장", "양조간장", "진간장"], ["고춧가루", "고추가루"], ["케첩", "케찹"],
   ["마요네즈", "마요"], ["물엿", "올리고당"], ["식초", "양조식초", "사과식초"], ["머스타드", "홀그레인머스타드", "머스터드"]];
 const seaKey = n => { const x = normName(String(n).replace(/\(.*?\)/g, "")); const g = SEA_GROUPS.find(g => g.includes(x)); return g ? g[0] : x; };
 // 보유 조미료(분류 양념·소스)에 있는지: 같은 이름·같은 묶음·'사과식초'처럼 끝이 같은 이름
@@ -1054,7 +1054,7 @@ function buildMinePrompt() {
 - 아래 [형식] 그대로, 레시피마다 [멍꼬북레시피] 블록 하나씩, 다른 설명 없이 코드 블록 하나로만 답해 줘.
 - 메뉴: 짧은 요리 이름.
 - 주재료: 조미료를 뺀 재료를 대표 이름(일반 재료 이름, 예: 두툼한 사각어묵 → 어묵)과 양으로, 쉼표로 나눠 줘. 예: 두부 1모, 대파 1/2대
-- 양념: 간장·소금·설탕·고춧가루·고추장·된장·참기름·식용유·식초·깨·맛술·다진 마늘 같은 조미료는 주재료가 아니라 여기에 양과 함께 적어 줘.
+- 양념: 간장·소금·설탕·고춧가루·고추장·된장·참기름·식용유·식초·깨·맛술 같은 조미료는 주재료가 아니라 여기에 양과 함께 적어 줘. 파·마늘은 양념이 아니라 주재료로 적어 줘.
 - 양을 안 적은 재료는 이름만 적어 줘. 짐작해서 채우지 마.
 - 인분: 숫자만. 모르면 비워 둬.
 - 조리법: 내가 적은 순서를 살려 번호 붙인 짧은 문장으로 (1. … 2. …). 내가 적지 않은 단계는 지어내지 말고, 빠진 것 같으면 메모에 '확인 필요: …'라고 적어 줘.
@@ -1157,7 +1157,9 @@ function updateHints() {
   $("f_gpsHint").textContent = gpsEst ? "추정값입니다. 실제 1인분 양에 맞게 고쳐 주세요." : "";
   $("f_expHint").textContent = expEst
     ? "⚠ 추정값: 분류와 보관 장소 기준의 일반적인 참고 기간입니다. 실제 상태를 꼭 확인하세요."
-    : ($("f_expiry").value ? "" : "비워 두면 저장할 때 추정값이 자동으로 들어갑니다.");
+    : ($("f_expiry").value ? "" : ($("f_category").value === "양념·소스"
+      ? "조미료는 비워 두면 유통기한 없이 저장합니다. 새로 사면 날짜를 넣어 주세요."
+      : "비워 두면 저장할 때 추정값이 자동으로 들어갑니다."));
 }
 
 function openItemDialog(it) {
@@ -1214,7 +1216,8 @@ $("f_save").onclick = async () => {
   const purchasedAt = $("f_purchasedAt").value || todayStr();
   let expiry = $("f_expiry").value;
   let expiryEstimated = expEst;
-  if (!expiry) { expiry = estimateExpiry(category, storage, purchasedAt); expiryEstimated = true; }
+  if (!expiry && category !== "양념·소스") { expiry = estimateExpiry(category, storage, purchasedAt); expiryEstimated = true; }   // 조미료는 비워 두면 유통기한 없이
+  if (!expiry) expiryEstimated = false;
   let gramsPerServing = null, servingEstimated = false;
   if (qtyType === "weight") {
     const g = Number($("f_gps").value);
@@ -1338,7 +1341,7 @@ function guessStorage(name) {
 
 function parseLine(raw) {
   let text = raw.trim();
-  const stockOnly = /\s있음$/.test(text);              // "간장 있음" → 양 기록 안 함
+  const stockOnly = /\s있음$/.test(text);              // "간장 있음" → 100%로
   if (stockOnly) text = text.replace(/\s있음$/, "");
 
   // 1) 유통기한 날짜(2026-11-20 형식)가 있으면 따로 떼어냄
@@ -1377,7 +1380,7 @@ function parseLine(raw) {
 
 // 수량+단위 → 앱 수량(g/개/%) 환산. 단·근·판 등은 추정값 + 안내 문구
 function convertQty(name, category, num, unit) {
-  if (unit === "있음") return { qtyType: "stock", amount: 1, notes: [] };   // 양 기록 안 함
+  if (unit === "있음") return { qtyType: "percent", amount: 100, notes: [] };   // 양을 모르는 조미료 등: 100%로 시작
   let qtyType = "count", amount = num ?? 1;
   const notes = [];
   if (num == null) notes.push("수량이 없어 1개로 넣었습니다");
@@ -1429,7 +1432,7 @@ const ITEM_RULES = `- 대표 이름: 요리할 때 부르는 일반 재료 이�
 - 분류: 신선채소 / 육류·생선 / 유제품·계란 / 두부·가공식품 / 양념·소스 / 기타 중 하나
 - 보관: 냉장 / 냉동 / 실온 중 하나
 - 수량·단위: 무게를 알면 총 무게를 g으로 (예: 500g×2팩 → 수량 1000, 단위 g). 무게를 모르면 개수(개). '단·포기·판·근'으로 팔린 것은 그대로 (예: 수량 1, 단위 단).
-  양을 적지 않는 조미료처럼 '있음'만 표시할 것은 수량을 비우고 단위에 '있음'.
+  양을 모르는 조미료는 수량 100, 단위 %로 적어 줘. 파·마늘은 조미료가 아니라 식재료야.
 - 유통기한: 사진에 날짜가 보일 때만 YYYY-MM-DD로 적고, 없으면 비워 둬. 짐작해서 쓰지 마.
 - 구매일: 주문일(결제일)이 보이면 YYYY-MM-DD, 안 보이면 비워 둬.
 - 세제·휴지 같은 식자재가 아닌 것은 빼 줘.
@@ -1610,10 +1613,10 @@ function qRowHtml(r, i) {
       <select data-f="storage">${opt([["냉장","냉장"],["냉동","냉동"],["실온","실온"]], r.storage)}</select>
     </div>
     <div class="inline">
-      <select data-f="qtyType">${opt([["weight","무게 (g)"],["count","개수 (개)"],["percent","비율 (%)"],["stock","있음만"]], r.qtyType)}</select>
+      <select data-f="qtyType">${opt([["weight","무게 (g)"],["count","개수 (개)"],["percent","비율 (%)"]], r.qtyType)}</select>
       <input data-f="amount" type="number" inputmode="decimal" min="0" step="any" value="${r.qtyType === "stock" ? "" : esc(r.amount)}" ${r.qtyType === "stock" ? 'disabled placeholder="양 기록 안 함"' : 'placeholder="수량"'}>
     </div>
-    <label>유통기한 (비워 두면 추정값 자동 입력)</label>
+    <label>유통기한 (비워 두면 추정값, 조미료는 유통기한 없음)</label>
     <input data-f="expiry" type="date" value="${esc(r.expiry)}">
     <input data-f="memo" value="${esc(r.memo || "")}" placeholder="메모 (선택)" style="margin-top:6px">
     ${r.note ? `<div class="hint">${esc(r.note)}</div>` : ""}
@@ -1754,14 +1757,14 @@ $("q_save").onclick = async () => {
   qRows.forEach(r => {
     const name = String(r.name).trim();
     const amount = r.qtyType === "stock" ? 1 : round1(Number(r.amount));
-    const expiry = r.expiry || estimateExpiry(r.category, r.storage, purchasedAt);
+    const expiry = r.expiry || (r.category === "양념·소스" ? "" : estimateExpiry(r.category, r.storage, purchasedAt));   // 조미료는 비워 두면 유통기한 없이
     const isWeight = r.qtyType === "weight";
     batch.set(doc(itemsCol), {
       name, baseName: String(r.baseName || "").trim().slice(0, 20) || name, category: r.category, storage: r.storage, qtyType: r.qtyType,
       amount, initialAmount: amount,
       gramsPerServing: isWeight ? (GPS[r.category] || 100) : null,
       servingEstimated: isWeight,
-      expiry, expiryEstimated: !r.expiry || !!r.expiryEst,
+      expiry, expiryEstimated: !!expiry && (!r.expiry || !!r.expiryEst),
       alertDays: calcAlertDays(r.category, purchasedAt, expiry),
       source, purchasedAt,
       memo: [String(r.memo || "").trim(), qMode === "quick" ? `입력: ${r.raw}` : ""].filter(Boolean).join(" / "),
