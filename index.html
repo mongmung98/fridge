@@ -63,6 +63,11 @@
   .item-act{display:flex;gap:4px;padding-right:10px}
   .mini{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:0 12px;min-height:38px;font-size:14px}
   .mini.fill{border-color:var(--accent);color:var(--accent);font-weight:600}
+  .shrow{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--line);min-height:48px}
+  .shrow:first-child{border-top:none}
+  .shrow input[type=checkbox]{width:20px;height:20px;flex:0 0 auto}
+  .shrow.done .item-name{color:var(--faint);text-decoration:line-through}
+  .shrow .item-qty{margin-left:auto}
   .ckrow{display:grid;grid-template-columns:auto 1fr auto;gap:4px 10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
   .ckrow:first-child{border-top:none}
   .ckrow input[type=checkbox]{width:20px;height:20px}
@@ -169,6 +174,7 @@
     <button data-tab="items" class="on">식자재</button>
     <button data-tab="expiry" id="expiryTabBtn">유통기한 관리</button>
     <button data-tab="menu">메뉴</button>
+    <button data-tab="shop" id="shopTabBtn">장보기</button>
   </nav>
   <main>
     <p class="status" id="syncStatus"></p>
@@ -202,6 +208,24 @@
 
     <div id="expiryTab" class="hidden">
       <div id="expiryList"></div>
+    </div>
+
+    <div id="shopTab" class="hidden">
+      <h2 class="group" style="margin-top:4px">살 것 <span class="num" id="shopCount"></span></h2>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input id="sh_name" placeholder="살 것 (예: 우유)" style="flex:2;min-width:0" maxlength="40">
+        <input id="sh_qty" placeholder="양 (선택)" style="flex:1;min-width:0" maxlength="20">
+        <button class="primary" id="sh_add" style="flex:0 0 auto">추가</button>
+      </div>
+      <div id="shopList"></div>
+      <div class="btns" style="justify-content:space-between;flex-wrap:wrap">
+        <button class="mini" id="sh_copy">목록 복사</button>
+        <button class="mini danger" id="sh_clearDone">산 것 지우기</button>
+      </div>
+      <h2 class="group" style="margin-top:26px">추천 <span class="num">다 썼거나 얼마 안 남은 것</span></h2>
+      <div id="shopSuggest"></div>
+      <h2 class="group" style="margin-top:26px">장보기 기록 <span class="num">구매일·구매처별</span></h2>
+      <div id="shopHistory"></div>
     </div>
 
     <div id="menuTab" class="hidden">
@@ -516,6 +540,7 @@ const db = initializeFirestore(app, {
 });
 const itemsCol = collection(db, "items");
 const recipesCol = collection(db, "recipes");
+const shopCol = collection(db, "shopping");
 
 // ===== 기본값 (일반적인 참고값 — 정확하지 않을 수 있음) =====
 const CATS = ["신선채소", "육류·생선", "유제품·계란", "두부·가공식품", "양념·소스", "기타"];
@@ -600,6 +625,8 @@ let visibleIds = [];              // 지금 식자재 탭에 보이는 품목
 const selectedIds = new Set();
 try { if (localStorage.getItem("viewMode") === "detail") viewMode = "detail"; } catch (e) {}
 let recipes = [];
+let shopping = [];
+let unsubShop = null;
 let unsubRecipes = null;
 let recipesError = "";
 let menuView = "all";
@@ -643,7 +670,12 @@ onAuthStateChanged(auth, user => {
   currentUser = user;
   if (unsub) { unsub(); unsub = null; }
   if (unsubRecipes) { unsubRecipes(); unsubRecipes = null; }
-  if (!user) { items = []; recipes = []; show("loginView"); return; }
+  if (unsubShop) { unsubShop(); unsubShop = null; }
+  if (!user) { items = []; recipes = []; shopping = []; show("loginView"); return; }
+  unsubShop = onSnapshot(shopCol, snap => {
+    shopping = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderShop();
+  }, err => { $("shopList").innerHTML = `<p class="hint">살 것 목록을 불러오지 못했습니다 (${esc(err.code)}).</p>`; });
   recipesError = "";
   unsubRecipes = onSnapshot(recipesCol, snap => {
     recipes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -673,7 +705,7 @@ onAuthStateChanged(auth, user => {
 });
 
 // ===== 화면 그리기 =====
-function render() { renderItems(); renderExpiry(); renderMenus(); }
+function render() { renderItems(); renderExpiry(); renderMenus(); renderShop(); }
 
 function sortItems(arr) {
   return arr.slice().sort((a, b) =>
@@ -830,6 +862,7 @@ document.querySelectorAll("nav.tabs button").forEach(b => b.onclick = () => {
   $("itemsTab").classList.toggle("hidden", b.dataset.tab !== "items");
   $("expiryTab").classList.toggle("hidden", b.dataset.tab !== "expiry");
   $("menuTab").classList.toggle("hidden", b.dataset.tab !== "menu");
+  $("shopTab").classList.toggle("hidden", b.dataset.tab !== "shop");
   $("addBtn").classList.toggle("hidden", b.dataset.tab !== "items" && b.dataset.tab !== "expiry");
   if (selectMode && b.dataset.tab !== "items") setSelectMode(false);
 });
@@ -1151,6 +1184,46 @@ function parseMenus(text) {
     });
   }
   return { menus, skipped };
+}
+
+// ===== 장보기: 추천과 기록 (순수 함수) =====
+const shopKey = n => normName(String(n || "").replace(/\(.*?\)/g, ""));
+// 다 썼거나 얼마 안 남은 품목 → 살 것 추천 (같은 이름이 넉넉히 있으면 빼고, 이미 목록에 있으면 뺌)
+function suggestShopping(list, shop) {
+  const inList = new Set(shop.filter(x => !x.done).map(x => shopKey(x.name)));
+  const isLow = it => it.status !== "다씀" && Number(it.amount) > 0 && (
+    it.qtyType === "weight" ? Number(it.amount) <= (Number(it.gramsPerServing) || 100) :
+    it.qtyType === "percent" ? Number(it.amount) <= 20 :
+    it.qtyType === "count" ? Number(it.amount) <= 1 && Number(it.initialAmount) > 1 : false);
+  const groups = new Map();
+  for (const it of list) {
+    const k = shopKey(it.baseName || it.name);
+    if (!k) continue;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(it);
+  }
+  const out = [];
+  for (const [k, arr] of groups) {
+    if (inList.has(k) || arr.some(x => x.status !== "다씀" && Number(x.amount) > 0 && !isLow(x))) continue;   // 넉넉한 게 있으면 추천 안 함
+    const low = arr.find(isLow);
+    const used = arr.find(x => x.status === "다씀" || Number(x.amount) <= 0);
+    const it = low || used;
+    if (!it) continue;
+    out.push({ name: it.baseName && it.baseName !== it.name ? it.baseName : it.name, from: it.name,
+      reason: low ? `${amountText(low)} 남음` : "다 씀", low: !!low });
+  }
+  return out.sort((a, b) => (b.low - a.low) || a.name.localeCompare(b.name, "ko")).slice(0, 20);
+}
+// 품목의 구매일·구매처로 장보기 기록 묶기 (따로 저장하지 않음)
+function shoppingHistory(list, limit = 15) {
+  const g = new Map();
+  for (const it of list) {
+    if (!it.purchasedAt) continue;
+    const k = it.purchasedAt + "|" + (it.source || "기타");
+    if (!g.has(k)) g.set(k, { date: it.purchasedAt, source: it.source || "기타", names: [] });
+    g.get(k).names.push(it.name);
+  }
+  return [...g.values()].sort((a, b) => b.date.localeCompare(a.date) || a.source.localeCompare(b.source, "ko")).slice(0, limit);
 }
 
 // ===== 이 요리 했어요: 레시피 양 → 냉장고에서 뺄 양 =====
@@ -1994,6 +2067,7 @@ function renderMenus() {
   // 재료가 부족한 메뉴: 클로드 추천은 모두, 저장된 레시피는 한 가지만 부족한 것까지
   const short = pool.filter(x => !x.an.canMake && (!x.saved || x.an.missing.length === 1) && x.an.have.length).sort(byOrder);
   const btns = x => `<button class="mini" data-mact="cook" data-key="${esc(x.key)}">이 요리 했어요</button>` +
+    (x.an.missing.length ? `<button class="mini" data-mact="shopMissing" data-key="${esc(x.key)}">없는 재료 살 것에 추가</button>` : "") +
     (x.saved ? "" : `<button class="mini fill" data-mact="saveClaude" data-idx="${x.idx}">레시피북에 저장</button>`);
   const row = x => menuRowHtml(x.key, x.rec, x.an, { buttons: btns(x) });
   let html = ready.length
@@ -2036,6 +2110,14 @@ $("menuTab").addEventListener("click", async e => {
   if (!b) return;
   const act = b.dataset.mact;
   if (act === "toggle") { const k = b.dataset.key; openMenu.has(k) ? openMenu.delete(k) : openMenu.add(k); renderMenus(); return; }
+  if (act === "shopMissing") {
+    const k = b.dataset.key;
+    const rec = k.startsWith("c:") ? claudeMenus.menus[Number(k.slice(2))] : recipes.find(r => r.id === k.slice(2));
+    if (!rec) return;
+    const n = await addShopping(analyzeRecipe(rec, items).missing.map(g => ({ name: g.name, qty: g.qty })));
+    alert(n ? `살 것 목록에 ${n}개를 추가했습니다.` : "이미 살 것 목록에 있습니다.");
+    return;
+  }
   if (act === "cook") {
     const k = b.dataset.key;
     const rec = k.startsWith("c:") ? claudeMenus.menus[Number(k.slice(2))] : recipes.find(r => r.id === k.slice(2));
@@ -2104,6 +2186,80 @@ $("m_parse").onclick = () => {
   if (r.skipped.length) alert(`메뉴 ${r.menus.length}개를 불러왔습니다. 형식이 맞지 않아 건너뛴 줄: ${r.skipped.length}개`);
 };
 
+// ===== 장보기 탭 =====
+function renderShop() {
+  if (!$("shopList")) return;
+  const list = shopping.slice().sort((a, b) => (a.done - b.done) || String(a.name).localeCompare(String(b.name), "ko"));
+  const left = list.filter(x => !x.done).length;
+  $("shopCount").textContent = left ? String(left) : "";
+  $("shopTabBtn").textContent = left ? `장보기 (${left})` : "장보기";
+  $("shopList").innerHTML = list.length ? `<div class="list">${list.map(x => `<label class="shrow ${x.done ? "done" : ""}">
+      <input type="checkbox" data-shid="${esc(x.id)}" ${x.done ? "checked" : ""}>
+      <span class="item-name">${esc(x.name)}</span><span class="item-qty">${esc(x.qty || "")}</span></label>`).join("")}</div>`
+    : '<div class="list"><p class="empty">살 것 목록이 비어 있습니다.<br>위에서 직접 넣거나 아래 추천에서 골라 보세요.</p></div>';
+  const sug = suggestShopping(items, shopping);
+  $("shopSuggest").innerHTML = sug.length ? `<div class="list">${sug.map((x, i) => `<div class="shrow">
+      <span class="item-name">${esc(x.name)}</span><span class="item-tag">${esc(x.reason)}</span>
+      <button class="mini fill" style="margin-left:auto" data-shsug="${i}">추가</button></div>`).join("")}</div>
+      <div class="btns"><button class="mini" id="sh_addAll">추천 모두 추가</button></div>`
+    : '<p class="meta" style="margin:0 2px">지금은 추천할 것이 없습니다.</p>';
+  const hist = shoppingHistory(items);
+  $("shopHistory").innerHTML = hist.length ? `<div class="list">${hist.map(h => `<div class="shrow" style="display:block">
+      <div><b>${esc(h.date)}</b> <span class="item-tag">${esc(h.source)}</span> <span class="item-tag">${h.names.length}개</span></div>
+      <div class="meta">${esc(h.names.join(", "))}</div></div>`).join("")}</div>`
+    : '<p class="meta" style="margin:0 2px">아직 기록이 없습니다.</p>';
+}
+// 살 것 목록에 여러 개 추가 (이미 있는 이름은 건너뜀). 추가한 개수 반환
+async function addShopping(entries) {
+  const have = new Set(shopping.filter(x => !x.done).map(x => shopKey(x.name)));
+  const add = [];
+  for (const e of entries) {
+    const name = String(e.name || "").trim().slice(0, 40), k = shopKey(name);
+    if (!k || have.has(k)) continue;
+    have.add(k);
+    add.push({ name, qty: String(e.qty || "").trim().slice(0, 20) });
+  }
+  if (!add.length) return 0;
+  try {
+    await commitInChunks(add.map(x => b => b.set(doc(shopCol), { ...x, done: false, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: who() })));
+  } catch (err) { alert("저장 실패: " + err.code); return 0; }
+  return add.length;
+}
+$("sh_add").onclick = async () => {
+  const name = $("sh_name").value.trim();
+  if (!name) { alert("살 것을 입력해 주세요."); return; }
+  if (shopping.some(x => !x.done && shopKey(x.name) === shopKey(name))) { alert(`'${name}'은(는) 이미 살 것 목록에 있습니다.`); return; }
+  const qty = $("sh_qty").value;
+  $("sh_name").value = ""; $("sh_qty").value = "";
+  await addShopping([{ name, qty }]);
+};
+$("sh_name").addEventListener("keydown", e => { if (e.key === "Enter") $("sh_add").click(); });
+$("shopTab").addEventListener("change", async e => {
+  const id = e.target.dataset.shid;
+  if (!id) return;
+  try { await updateDoc(doc(shopCol, id), { done: e.target.checked, updatedAt: serverTimestamp(), updatedBy: who() }); }
+  catch (err) { alert("저장 실패: " + err.code); }
+});
+$("shopTab").addEventListener("click", async e => {
+  const b = e.target.closest("[data-shsug], #sh_addAll");
+  if (!b) return;
+  const sug = suggestShopping(items, shopping);
+  await addShopping(b.id === "sh_addAll" ? sug : [sug[Number(b.dataset.shsug)]].filter(Boolean));
+});
+$("sh_clearDone").onclick = async () => {
+  const done = shopping.filter(x => x.done);
+  if (!done.length) { alert("체크한(산) 것이 없습니다."); return; }
+  if (!confirm(`산 것 ${done.length}개를 목록에서 지울까요?\n${done.slice(0, 5).map(x => x.name).join(", ")}${done.length > 5 ? " …" : ""}`)) return;
+  try { await commitInChunks(done.map(x => b => b.delete(doc(shopCol, x.id)))); } catch (err) { alert("삭제 실패: " + err.code); }
+};
+$("sh_copy").onclick = async () => {
+  const left = shopping.filter(x => !x.done);
+  if (!left.length) { alert("살 것이 없습니다."); return; }
+  const text = "살 것\n" + left.map(x => `- ${x.name}${x.qty ? " " + x.qty : ""}`).join("\n");
+  try { await navigator.clipboard.writeText(text); alert("살 것 목록을 복사했습니다."); }
+  catch (e) { alert(text); }
+};
+
 // 이 요리 했어요 창
 let cookPlan = null;
 const unitOf = t => t === "weight" ? "g" : t === "count" ? "개" : t === "percent" ? "%" : "";
@@ -2146,6 +2302,12 @@ $("ck_rows").addEventListener("input", e => {   // 남는 양 바로 보여 주�
   if (span && r.include) span.textContent = `남음 ${amountText({ qtyType: r.qtyType, amount: left })}${left === 0 ? " (다 씀)" : ""}`;
 });
 $("ck_cancel").onclick = () => $("cookDialog").close();
+$("ck_missing").addEventListener("click", async e => {
+  if (e.target.id !== "ck_shop") return;
+  const n = await addShopping(cookPlan.missing.map(name => ({ name })));
+  e.target.disabled = true;
+  e.target.textContent = n ? `${n}개 추가함` : "이미 목록에 있음";
+});
 $("ck_ok").onclick = async () => {
   readCook();
   const rows = cookPlan.rows.filter(r => r.include && r.qtyType !== "stock");
