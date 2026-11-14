@@ -335,6 +335,7 @@ const UNIT_W = {
 const NUM = { "하나":1, "한":1, "둘":2, "두":2, "셋":3, "세":3, "석":3, "넷":4, "네":4, "다섯":5, "여섯":6, "일곱":7, "여덟":8, "아홉":9, "열":10, "반":0.5 };
 const NUMWORDS = "하나|한|둘|두|셋|세|석|넷|네|다섯|여섯|일곱|여덟|아홉|열|반";
 const UNITS = "킬로그램|kg|킬로|그램|g|ml|리터|l|근|봉지|봉|개|알|구|입|모|팩|병|캔|통|마리|포기|송이|줄|장|단|묶음|망|박스|판|%";
+const UNIT_RE = new RegExp(`^(${UNITS})$`, "i");
 
 // ===== 공통 도구 =====
 const $ = id => document.getElementById(id);
@@ -468,7 +469,7 @@ function rowHtml(it, right = "qty") {
   const es = expState(it);
   const open = viewMode === "detail" || openIds.has(it.id);
   const pct = it.initialAmount > 0 ? Math.max(0, Math.min(100, it.amount / it.initialAmount * 100)) : 0;
-  const rightTxt = right === "dday" ? ddayText(it) : shortAmount(it);
+  const rightTxt = right === "dday" ? ddayText(it) + (it.expiry && it.expiryEstimated ? " · 추정" : "") : shortAmount(it);
   const tag = storageFilter === "전체" || right === "dday" ? `<span class="item-tag">${esc(it.storage)}</span>` : "";
   return `<div class="item">
     <button class="item-main" data-act="toggle" data-id="${it.id}" aria-expanded="${open}">
@@ -481,6 +482,7 @@ function rowHtml(it, right = "qty") {
       <dl>
         <dt>유통기한</dt><dd>${expiryHtml(it)}</dd>
         <dt>용량</dt><dd>${esc(volumeText(it))}</dd>
+        <dt>알림</dt><dd>${it.alertDays ?? 7}일 전부터 임박</dd>
         <dt>분류</dt><dd>${esc(it.category)} · ${esc(it.storage)}</dd>
         ${it.memo ? `<dt>메모</dt><dd>${esc(it.memo)}</dd>` : ""}
       </dl>
@@ -829,7 +831,7 @@ function convertQty(name, category, num, unit) {
     } else {
       notes.push(`'${unit}' 단위를 개수로 넣었습니다`);
     }
-  } else if (unit && !new RegExp(`^(${UNITS})$`, "i").test(unit)) {
+  } else if (unit && !UNIT_RE.test(unit)) {
     notes.push(`'${unit}' 단위를 몰라 개수로 넣었습니다`);
   }
   return { qtyType, amount: round1(amount), notes };
@@ -941,7 +943,7 @@ function parsePasted(text) {
     if (line.includes("|")) {
       const cells = line.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
       if (cells.every(c => /^:?-{2,}:?$/.test(c) || c === "")) continue; // 표 구분선
-      if (cells[0].includes("품목")) continue;                         // 제목 줄
+      if (/^(품목명?|이름)$/.test(cells[0])) continue;                         // 제목 줄
       if (!cells[0] || /^(\(|예[:)])/.test(cells[0])) continue;      // 빈 줄·안내 줄
       rows.push(parseTableRow(cells, line));
     } else {
@@ -949,7 +951,10 @@ function parsePasted(text) {
     }
   }
   // 표 형식이 하나도 없으면 빠른 입력처럼 자유 문장으로 해석
-  if (!rows.length && others.length) return { source, purchasedAt, rows: parseText(others.join("\n")), skipped: [] };
+  if (!rows.length && others.length) {
+    const isChat = l => /[.!?:]$|니다|세요|해요/.test(l) && !/\d/.test(l);
+    return { source, purchasedAt, rows: parseText(others.filter(l => !isChat(l)).join("\n")), skipped: others.filter(isChat) };
+  }
   return { source, purchasedAt, rows, skipped: others };
 }
 
@@ -974,8 +979,13 @@ function qRowHtml(r, i) {
     <input data-f="expiry" type="date" value="${esc(r.expiry)}">
     <input data-f="memo" value="${esc(r.memo || "")}" placeholder="메모 (선택)" style="margin-top:6px">
     ${r.note ? `<div class="hint">${esc(r.note)}</div>` : ""}
-    ${items.some(it => it.status !== "다씀" && it.name === String(r.name).trim()) ? '<div class="hint">같은 이름의 보유 품목이 이미 있습니다. 저장하면 별도 품목으로 추가됩니다.</div>' : ""}
+    <div class="hint" data-dup>${dupText(r.name)}</div>
   </div>`;
+}
+function dupText(name) {
+  const n = String(name || "").trim();
+  return n && items.some(it => it.status !== "다씀" && it.name === n)
+    ? "같은 이름의 보유 품목이 이미 있습니다. 저장하면 별도 품목으로 추가됩니다." : "";
 }
 function renderQRows() {
   $("q_rows").innerHTML = qRows.length
@@ -1060,6 +1070,10 @@ $("p_parse").onclick = () => {
   if (!r.rows.length) { alert("식자재를 찾지 못했습니다. 형식을 확인해 주세요."); return; }
   goConfirm(r.rows, r.source || $("p_store").value, r.purchasedAt, r.skipped);
 };
+$("q_rows").addEventListener("input", e => {
+  if (e.target.dataset.f !== "name") return;
+  e.target.closest(".qrow").querySelector("[data-dup]").textContent = dupText(e.target.value);
+});
 $("q_rows").addEventListener("click", e => {
   const b = e.target.closest("[data-qdel]");
   if (!b) return;
@@ -1092,7 +1106,7 @@ $("q_save").onclick = async () => {
       expiry, expiryEstimated: !r.expiry,
       alertDays: calcAlertDays(r.category, purchasedAt, expiry),
       source, purchasedAt,
-      memo: [String(r.memo || "").trim(), qMode === "quick" ? `입력: ${r.raw}` : "Claude 정리 가져오기", r.note].filter(Boolean).join(" / "),
+      memo: [String(r.memo || "").trim(), qMode === "quick" ? `입력: ${r.raw}` : ""].filter(Boolean).join(" / "),
       status: amount > 0 ? "보유" : "다씀",
       createdAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: who()
     });
