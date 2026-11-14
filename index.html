@@ -33,6 +33,7 @@
   nav.tabs button{padding:10px 0;border:none;background:none;font-size:15px;color:var(--sub);border-bottom:2px solid transparent;margin-bottom:-1px}
   nav.tabs button.on{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
   main{padding:12px 16px 110px;max-width:640px;margin:0 auto}
+  body.selecting main{padding-bottom:190px}
 
   .status{font-size:12px;color:var(--faint);margin:0 0 10px}
   .btns.toolbar{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:0 0 10px}
@@ -627,6 +628,7 @@ const selectedIds = new Set();
 try { if (localStorage.getItem("viewMode") === "detail") viewMode = "detail"; } catch (e) {}
 let recipes = [];
 let shopping = [];
+let recipesLoaded = false, shopLoaded = false;   // 첫 목록을 받았는지 (백업 되돌리기 안전장치)
 let unsubShop = null;
 let unsubRecipes = null;
 let recipesError = "";
@@ -672,14 +674,17 @@ onAuthStateChanged(auth, user => {
   if (unsub) { unsub(); unsub = null; }
   if (unsubRecipes) { unsubRecipes(); unsubRecipes = null; }
   if (unsubShop) { unsubShop(); unsubShop = null; }
+  recipesLoaded = shopLoaded = false;
   if (!user) { items = []; recipes = []; shopping = []; show("loginView"); return; }
   unsubShop = onSnapshot(shopCol, snap => {
     shopping = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    shopLoaded = true;
     renderShop();
   }, err => { $("shopList").innerHTML = `<p class="hint">살 것 목록을 불러오지 못했습니다 (${esc(err.code)}).</p>`; });
   recipesError = "";
   unsubRecipes = onSnapshot(recipesCol, snap => {
     recipes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    recipesLoaded = true;
     recipesError = "";
     renderMenus();
   }, err => {
@@ -858,21 +863,23 @@ function renderExpiry() {
 }
 
 // ===== 탭·필터 =====
+let currentTab = "items";
 document.querySelectorAll("nav.tabs button").forEach(b => b.onclick = () => {
+  currentTab = b.dataset.tab;
+  if (selectMode && b.dataset.tab !== "items") setSelectMode(false);
   document.querySelectorAll("nav.tabs button").forEach(x => x.classList.toggle("on", x === b));
   $("itemsTab").classList.toggle("hidden", b.dataset.tab !== "items");
   $("expiryTab").classList.toggle("hidden", b.dataset.tab !== "expiry");
   $("menuTab").classList.toggle("hidden", b.dataset.tab !== "menu");
   $("shopTab").classList.toggle("hidden", b.dataset.tab !== "shop");
   $("addBtn").classList.toggle("hidden", b.dataset.tab !== "items" && b.dataset.tab !== "expiry");
-  if (selectMode && b.dataset.tab !== "items") setSelectMode(false);
 });
 document.querySelectorAll("#storageChips .chip").forEach(c => c.onclick = () => {
   storageFilter = c.dataset.st;
   document.querySelectorAll("#storageChips .chip").forEach(x => x.classList.toggle("on", x === c));
   renderItems();
 });
-$("searchBox").oninput = renderItems;
+$("searchBox").oninput = () => { renderItems(); if (selectMode) updateSelBar(); };
 function setView(v) {
   viewMode = v;
   openIds.clear();
@@ -915,12 +922,14 @@ function setSelectMode(on) {
   selectedIds.clear();
   $("selToggle").textContent = on ? "선택 끝" : "선택";
   $("selBar").classList.toggle("hidden", !on);
-  $("addBtn").classList.toggle("hidden", on);
+  $("addBtn").classList.toggle("hidden", on || !["items", "expiry"].includes(currentTab));
+  document.body.classList.toggle("selecting", on);   // 아래 버튼 줄이 마지막 품목을 가리지 않게
   renderItems(); updateSelBar();
 }
 function updateSelBar() {
   for (const id of [...selectedIds]) if (!items.some(it => it.id === id)) selectedIds.delete(id);   // 다른 가족이 지운 품목 정리
-  $("selCount").textContent = `${selectedIds.size}개 선택`;
+  const hidden = [...selectedIds].filter(id => !visibleIds.includes(id)).length;
+  $("selCount").textContent = `${selectedIds.size}개 선택${hidden ? ` (${hidden}개는 지금 안 보임)` : ""}`;
   $("selUsed").disabled = $("selPurge").disabled = !selectedIds.size;
 }
 // 여러 건을 400건씩 나눠 한꺼번에 저장 (모든 묶음을 먼저 만들어 기기에 예약)
@@ -939,7 +948,8 @@ $("selAll").onclick = () => {
 $("selUsed").onclick = async () => {
   const list = items.filter(it => selectedIds.has(it.id) && it.status !== "다씀");
   if (!list.length) { alert("선택한 품목이 이미 모두 다 쓴 상태입니다."); return; }
-  if (!confirm(`${list.length}개 품목을 다 쓴 것으로 처리할까요?\n('다 쓴 품목 보기'에서 다시 채울 수 있습니다)`)) return;
+  const names = list.slice(0, 5).map(it => it.name).join(", ") + (list.length > 5 ? ` 외 ${list.length - 5}개` : "");
+  if (!confirm(`${list.length}개 품목을 다 쓴 것으로 처리할까요?\n${names}\n('다 쓴 품목 보기'에서 다시 채울 수 있습니다)`)) return;
   setSelectMode(false);
   try { await commitInChunks(list.map(it => b => b.update(doc(db, "items", it.id), { amount: 0, status: "다씀", updatedAt: serverTimestamp(), updatedBy: who() }))); }
   catch (err) { alert("저장 실패: " + err.code); }
@@ -1089,12 +1099,12 @@ const SEA_GROUPS = [["후추", "후춧가루", "통후추"], ["깨", "참깨", "
   ["마요네즈", "마요"], ["물엿", "올리고당"], ["식초", "양조식초", "사과식초"], ["머스타드", "홀그레인머스타드", "머스터드"]];
 const seaKey = n => { const x = normName(String(n).replace(/\(.*?\)/g, "")); const g = SEA_GROUPS.find(g => g.includes(x)); return g ? g[0] : x; };
 // 보유 조미료(분류 양념·소스)에 있는지: 같은 이름·같은 묶음·'사과식초'처럼 끝이 같은 이름
-const ownedSeasoning = (name, seaItems) => {
+const ownedSeasoning = (name, seaItems, exclude = new Set()) => {
   const k = seaKey(name);
-  return seaItems.find(it => [it.baseName, it.name].filter(Boolean).some(x => {
-    const y = seaKey(x);
-    return y === k || (k.length >= 2 && y.endsWith(k));
-  })) || null;
+  const pool = seaItems.filter(it => !exclude.has(it.id));
+  const keys = it => [it.baseName, it.name].filter(Boolean).map(seaKey);
+  return pool.find(it => keys(it).includes(k)) ||                                   // 이름이 같은 것 먼저 (간장 → 간장, 국간장 아님)
+    pool.find(it => keys(it).some(y => k.length >= 2 && y.endsWith(k))) || null;
 };
 const BASIC_SEAS = ["소금", "설탕", "물", "후추", "식용유"];   // 없다고 표시하지 않는 기본 양념
 function isSeasoningName(n) {
@@ -1131,6 +1141,13 @@ function findItem(ingName, list) {
     if (part) return part;
   }
   return null;
+}
+// 같은 재료로 짝지어지는 품목 모두 (유통기한 빠른 순)
+function findItems(ingName, list) {
+  const first = findItem(ingName, list);
+  if (!first) return [];
+  const rest = list.filter(it => it.id !== first.id && it.qtyType === first.qtyType && findItem(ingName, [it]));
+  return [first, ...rest].sort((a, b) => (a.expiry || "9999").localeCompare(b.expiry || "9999"));
 }
 // 레시피 하나를 지금 냉장고와 비교
 function analyzeRecipe(rec, list) {
@@ -1226,7 +1243,11 @@ function parseMenus(text) {
 // ===== 장보기: 추천과 기록 (순수 함수) =====
 const shopKey = n => normName(String(n || "").replace(/\(.*?\)/g, ""));
 // 다 썼거나 얼마 안 남은 품목 → 살 것 추천 (같은 이름이 넉넉히 있으면 빼고, 이미 목록에 있으면 뺌)
-function suggestShopping(list, shop) {
+// 마지막으로 바뀐 때(다 씀 처리한 때). 없으면 구매일
+const whenMs = it => (it.updatedAt && typeof it.updatedAt.toDate === "function") ? it.updatedAt.toDate().getTime()
+  : (typeof it.updatedAt === "string" && !isNaN(Date.parse(it.updatedAt))) ? Date.parse(it.updatedAt)
+  : (it.purchasedAt ? parseD(it.purchasedAt).getTime() : 0);
+function suggestShopping(list, shop, now = Date.now()) {
   const inList = new Set(shop.filter(x => !x.done).map(x => shopKey(x.name)));
   const isLow = it => it.status !== "다씀" && Number(it.amount) > 0 && (
     it.qtyType === "weight" ? Number(it.amount) <= (Number(it.gramsPerServing) || 100) :
@@ -1243,13 +1264,14 @@ function suggestShopping(list, shop) {
   for (const [k, arr] of groups) {
     if (inList.has(k) || arr.some(x => x.status !== "다씀" && Number(x.amount) > 0 && !isLow(x))) continue;   // 넉넉한 게 있으면 추천 안 함
     const low = arr.find(isLow);
-    const used = arr.find(x => x.status === "다씀" || Number(x.amount) <= 0);
+    const used = arr.filter(x => (x.status === "다씀" || Number(x.amount) <= 0) && whenMs(x) >= now - 60 * 86400000)
+      .sort((a, b) => whenMs(b) - whenMs(a))[0];                      // 최근 60일 안에 다 쓴 것만
     const it = low || used;
     if (!it) continue;
     out.push({ name: it.baseName && it.baseName !== it.name ? it.baseName : it.name, from: it.name,
-      reason: low ? `${amountText(low)} 남음` : "다 씀", low: !!low });
+      reason: low ? `${amountText(low)} 남음` : "다 씀", low: !!low, when: whenMs(it) });
   }
-  return out.sort((a, b) => (b.low - a.low) || a.name.localeCompare(b.name, "ko")).slice(0, 20);
+  return out.sort((a, b) => (b.low - a.low) || (b.when - a.when) || a.name.localeCompare(b.name, "ko")).slice(0, 20);
 }
 // 품목의 구매일·구매처로 장보기 기록 묶기 (따로 저장하지 않음)
 function shoppingHistory(list, limit = 15) {
@@ -1266,7 +1288,9 @@ function shoppingHistory(list, limit = 15) {
 // ===== 이 요리 했어요: 레시피 양 → 냉장고에서 뺄 양 =====
 // "300g" → {n:300, unit:"g"}, "1/2대" → {n:0.5, unit:"대"}, "두 개" → {n:2, unit:"개"}, "약간" → {n:null}
 function parseQty(q) {
-  q = String(q || "").replace(/^약\s*/, "").trim();
+  q = String(q || "").replace(/^약\s*/, "").replace(/½/g, "1/2").replace(/¼/g, "1/4").replace(/¾/g, "3/4").trim();
+  let mm = q.match(/^(\d+)\s*과?\s+(\d+)\s*\/\s*(\d+)\s*(.*)$/);   // "1과 1/2컵"
+  if (mm && Number(mm[3])) return { n: Number(mm[1]) + Number(mm[2]) / Number(mm[3]), unit: mm[4].trim().toLowerCase() };
   let m = q.match(/^(\d+)\s*\/\s*(\d+)\s*(.*)$/);
   if (m && Number(m[2])) return { n: Number(m[1]) / Number(m[2]), unit: m[3].trim().toLowerCase() };
   m = q.match(/^(\d+(?:\.\d+)?)\s*(.*)$/);
@@ -1275,21 +1299,25 @@ function parseQty(q) {
   if (m) return { n: NUM[m[1]], unit: m[2].trim().toLowerCase() };
   return { n: null, unit: "" };
 }
-const W_UNITS = { g: 1, 그램: 1, kg: 1000, 킬로: 1000, ml: 1, l: 1000, 리터: 1000 };
-// 품목 하나에서 뺄 기본 양 (품목 단위 기준, 지금 양을 넘지 않게)
-function defaultDeduct(item, qty, isSea) {
+const W_UNITS = { g: 1, 그램: 1, kg: 1000, 킬로: 1000, ml: 1, cc: 1, l: 1000, 리터: 1000 };
+const isWUnit = u => Object.hasOwn(W_UNITS, u);
+// 품목 하나에서 뺄 기본 양 (품목 단위 기준). cap=true면 지금 양을 넘지 않게
+function defaultDeduct(item, qty, isSea, cap = true) {
   const cur = Number(item.amount) || 0;
   const { n, unit } = parseQty(qty);
+  const gps = Number(item.gramsPerServing) || 100;
   let v;
   if (item.qtyType === "weight") {
-    if (n != null && unit in W_UNITS) v = n * W_UNITS[unit];
-    else v = (Number(item.gramsPerServing) || 100) * (isSea ? 0.1 : 1);   // 단위를 g으로 못 바꾸면 1인분
+    if (n != null && isWUnit(unit)) v = n * W_UNITS[unit];
+    else if (n != null && unit === "인분") v = n * gps;
+    else v = gps * (isSea ? 0.1 : 1);   // 단위를 g으로 못 바꾸면 1인분
   } else if (item.qtyType === "count") {
-    v = n != null && !(unit in W_UNITS) && !/큰술|작은술|스푼|컵/.test(unit) ? n : 1;
+    v = n != null && !isWUnit(unit) && !/큰술|작은술|스푼|컵|인분/.test(unit) ? n : 1;
   } else if (item.qtyType === "percent") {
     v = n != null && unit === "%" ? n : (isSea || item.category === "양념·소스" || /큰술|작은술|스푼|티스푼/.test(unit) ? 5 : 25);   // 소분 냉동품 한 번 = 25%, 양념류 = 5%
   } else v = 0;   // 양을 기록하지 않는 품목
-  return round1(Math.min(cur, Math.max(0, v)));
+  v = Math.max(0, v);
+  return round1(cap ? Math.min(cur, v) : v);
 }
 // 레시피 → 차감 계획: 주재료는 기본 체크, 조미료는 기본 해제
 function planCook(rec, list) {
@@ -1297,21 +1325,32 @@ function planCook(rec, list) {
   const act = activeItems(list);
   const seaItems = act.filter(it => it.category === "양념·소스");
   const rows = [], used = new Set();
-  for (const { ing, item } of an.have) {
-    if (used.has(item.id)) continue;
-    used.add(item.id);
-    rows.push({ itemId: item.id, name: item.name, ing: ing.name + (ing.qty ? " " + ing.qty : ""), qtyType: item.qtyType, current: Number(item.amount) || 0,
-      deduct: defaultDeduct(item, ing.qty, false), include: item.qtyType !== "stock", sea: false });
+  for (const { ing } of an.have) {
+    // 같은 재료가 여러 개면 유통기한 빠른 것부터 나눠서 뺌 (앞다리 80g + 목살 220g)
+    const matches = findItems(ing.name, act).filter(it => !used.has(it.id));
+    if (!matches.length) continue;
+    let need = defaultDeduct(matches[0], ing.qty, false, false);
+    const ingText = ing.name + (ing.qty ? " " + ing.qty : "");
+    matches.forEach((item, i) => {
+      if (i > 0 && need <= 0) return;
+      const cur = Number(item.amount) || 0;
+      const take = round1(Math.min(cur, need));
+      need = round1(need - take);
+      used.add(item.id);
+      rows.push({ itemId: item.id, name: item.name, ing: ingText, qtyType: item.qtyType, current: cur,
+        deduct: take, include: item.qtyType !== "stock", sea: false });
+    });
+    if (need > 0 && rows.length) rows[rows.length - 1].short = need;   // 냉장고에 있는 것보다 레시피가 많을 때
   }
   const seaList = [...(rec.seasonings || []).map(splitIngredient), ...(rec.ingredients || []).filter(g => isSeasoningName(g.name))];
   for (const g of seaList) {
-    const item = ownedSeasoning(g.name, seaItems);
-    if (!item || used.has(item.id)) continue;
+    const item = ownedSeasoning(g.name, seaItems, used);
+    if (!item) continue;
     used.add(item.id);
     rows.push({ itemId: item.id, name: item.name, ing: g.name + (g.qty ? " " + g.qty : ""), qtyType: item.qtyType, current: Number(item.amount) || 0,
       deduct: defaultDeduct(item, g.qty, true), include: false, sea: true });
   }
-  return { rows, missing: an.missing.map(g => g.name) };
+  return { rows, missing: an.missing.map(g => ({ name: g.name, qty: g.qty || "" })) };
 }
 
 // 멍꼬북 레시피: 대충 적은 레시피를 클로드가 정리하도록 하는 요청문
@@ -2237,7 +2276,7 @@ function renderShop() {
   const sug = suggestShopping(items, shopping);
   $("shopSuggest").innerHTML = sug.length ? `<div class="list">${sug.map((x, i) => `<div class="shrow">
       <span class="item-name">${esc(x.name)}</span><span class="item-tag">${esc(x.reason)}</span>
-      <button class="mini fill" style="margin-left:auto" data-shsug="${i}">추가</button></div>`).join("")}</div>
+      <button class="mini fill" style="margin-left:auto" data-shsug="${esc(x.name)}">추가</button></div>`).join("")}</div>
       <div class="btns"><button class="mini" id="sh_addAll">추천 모두 추가</button></div>`
     : '<p class="meta" style="margin:0 2px">지금은 추천할 것이 없습니다.</p>';
   const hist = shoppingHistory(items);
@@ -2257,9 +2296,9 @@ async function addShopping(entries) {
     add.push({ name, qty: String(e.qty || "").trim().slice(0, 20) });
   }
   if (!add.length) return 0;
-  try {
-    await commitInChunks(add.map(x => b => b.set(doc(shopCol), { ...x, done: false, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: who() })));
-  } catch (err) { alert("저장 실패: " + err.code); return 0; }
+  // 화면은 바로 바뀌므로 서버 응답을 기다리지 않음 (오프라인이면 연결 후 저장)
+  commitInChunks(add.map(x => b => b.set(doc(shopCol), { ...x, done: false, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: who() })))
+    .catch(err => alert("살 것 목록 저장 실패: " + err.code));
   return add.length;
 }
 $("sh_add").onclick = async () => {
@@ -2270,7 +2309,7 @@ $("sh_add").onclick = async () => {
   $("sh_name").value = ""; $("sh_qty").value = "";
   await addShopping([{ name, qty }]);
 };
-$("sh_name").addEventListener("keydown", e => { if (e.key === "Enter") $("sh_add").click(); });
+$("sh_name").addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) $("sh_add").click(); });
 $("shopTab").addEventListener("change", async e => {
   const id = e.target.dataset.shid;
   if (!id) return;
@@ -2281,7 +2320,7 @@ $("shopTab").addEventListener("click", async e => {
   const b = e.target.closest("[data-shsug], #sh_addAll");
   if (!b) return;
   const sug = suggestShopping(items, shopping);
-  await addShopping(b.id === "sh_addAll" ? sug : [sug[Number(b.dataset.shsug)]].filter(Boolean));
+  await addShopping(b.id === "sh_addAll" ? sug : sug.filter(x => x.name === b.dataset.shsug));
 });
 $("sh_clearDone").onclick = async () => {
   const done = shopping.filter(x => x.done);
@@ -2308,13 +2347,13 @@ function cookRowHtml(r, i) {
     <div><b>${esc(r.name)}</b>${r.sea ? ' <span class="item-tag">조미료</span>' : ""}</div>
     <div class="ckamt">${r.qtyType === "stock" ? '<span class="meta">양 기록 안 함</span>'
       : `<input type="number" inputmode="decimal" min="0" step="any" data-cf="deduct" value="${esc(r.deduct)}"><span>${unitOf(r.qtyType)}</span>`}</div>
-    <p class="meta">레시피: ${esc(r.ing)} · 지금 ${esc(amountText(fake))}${r.qtyType === "stock" ? "" : ` → <span data-left>${r.include ? `남음 ${esc(amountText({ ...fake, amount: left }))}${left === 0 ? " (다 씀)" : ""}` : "빼지 않음"}</span>`}</p>
+    <p class="meta">레시피: ${esc(r.ing)}${r.short ? ` <span class="ing-miss">(${esc(amountText({ qtyType: r.qtyType, amount: r.short }).replace(/ \(.*\)$/, ""))} 부족)</span>` : ""} · 지금 ${esc(amountText(fake))}${r.qtyType === "stock" ? "" : ` → <span data-left>${r.include ? `남음 ${esc(amountText({ ...fake, amount: left }))}${left === 0 ? " (다 씀)" : ""}` : "빼지 않음"}</span>`}</p>
   </div>`;
 }
 function renderCook() {
   $("ck_rows").innerHTML = cookPlan.rows.length ? cookPlan.rows.map(cookRowHtml).join("") : '<p class="meta">냉장고에서 짝지어진 재료가 없습니다.</p>';
   $("ck_missing").innerHTML = cookPlan.missing.length
-    ? `없는 재료: ${esc(cookPlan.missing.join(", "))} <button type="button" class="mini" id="ck_shop">살 것 목록에 추가</button>` : "";
+    ? `없는 재료: ${esc(cookPlan.missing.map(g => g.name).join(", "))} <button type="button" class="mini" id="ck_shop" ${cookPlan.shopAdded ? "disabled" : ""}>${cookPlan.shopAdded || "살 것 목록에 추가"}</button>` : "";
 }
 function readCook() {
   document.querySelectorAll("#ck_rows .ckrow").forEach(el => {
@@ -2330,7 +2369,7 @@ function openCook(rec) {
   renderCook();
   $("cookDialog").showModal();
 }
-$("ck_rows").addEventListener("change", () => { readCook(); renderCook(); });
+$("ck_rows").addEventListener("change", e => { if (e.target.dataset.cf === "include") { readCook(); renderCook(); } });   // 체크할 때만 다시 그림
 $("ck_rows").addEventListener("input", e => {   // 남는 양 바로 보여 주기
   const el = e.target.closest(".ckrow"); if (!el || e.target.dataset.cf !== "deduct") return;
   const r = cookPlan.rows[Number(el.dataset.ci)];
@@ -2341,13 +2380,14 @@ $("ck_rows").addEventListener("input", e => {   // 남는 양 바로 보여 주�
 $("ck_cancel").onclick = () => $("cookDialog").close();
 $("ck_missing").addEventListener("click", async e => {
   if (e.target.id !== "ck_shop") return;
-  const n = await addShopping(cookPlan.missing.map(name => ({ name })));
+  const n = await addShopping(cookPlan.missing);
+  cookPlan.shopAdded = n ? `${n}개 추가함` : "이미 목록에 있음";
   e.target.disabled = true;
-  e.target.textContent = n ? `${n}개 추가함` : "이미 목록에 있음";
+  e.target.textContent = cookPlan.shopAdded;
 });
 $("ck_ok").onclick = async () => {
   readCook();
-  const rows = cookPlan.rows.filter(r => r.include && r.qtyType !== "stock");
+  const rows = cookPlan.rows.filter(r => r.include && r.qtyType !== "stock" && Number(r.deduct) !== 0 && r.deduct !== "0");
   for (const r of rows) {
     const v = Number(r.deduct);
     if (r.deduct === "" || isNaN(v) || v < 0) { alert(`'${r.name}'의 뺄 양을 숫자로 입력해 주세요.`); return; }
@@ -2358,6 +2398,7 @@ $("ck_ok").onclick = async () => {
     const left = round1(Math.max(0, (Number(it?.amount) || 0) - Number(r.deduct)));   // 누르는 순간의 양에서 뺌
     return b => b.update(doc(db, "items", r.itemId), { amount: left, status: left > 0 ? "보유" : "다씀", updatedAt: serverTimestamp(), updatedBy: who() });
   }).filter((_, i) => items.some(x => x.id === rows[i].itemId));
+  if (!ops.length) { alert("체크한 재료가 그사이 목록에서 사라졌습니다. 창을 닫고 다시 열어 주세요."); return; }
   $("cookDialog").close();
   try { await commitInChunks(ops); } catch (err) { alert("저장 실패: " + err.code); }
 };
@@ -2569,8 +2610,11 @@ $("b_restore").onclick = async () => {
   if (isOffline()) { alert("지금 인터넷에 연결되어 있지 않습니다. 연결된 뒤 되돌려 주세요."); return; }
   const mode = document.querySelector('input[name="b_mode"]:checked').value;
   const { sets, dels } = restorePlan(pendingRestore, items.map(x => x.id), mode);   // 누르는 순간의 목록으로 다시 계산
-  const recSets = extraPlan(pendingRestore.recipes, recipes.map(x => x.id), mode);
-  const shopSets = extraPlan(pendingRestore.shopping, shopping.map(x => x.id), mode);
+  // 레시피·살 것을 아직 못 불러왔으면 '없는 것'으로 잘못 보고 덮어쓸 수 있어 이번에는 건너뜀
+  const recSets = recipesLoaded && !recipesError ? extraPlan(pendingRestore.recipes, recipes.map(x => x.id), mode) : [];
+  const shopSets = shopLoaded ? extraPlan(pendingRestore.shopping, shopping.map(x => x.id), mode) : [];
+  if ((pendingRestore.recipes.length && !(recipesLoaded && !recipesError)) || (pendingRestore.shopping.length && !shopLoaded))
+    alert("레시피북·살 것 목록을 아직 불러오지 못해 이번에는 식자재만 되돌립니다. 잠시 뒤 다시 하면 함께 되돌릴 수 있습니다.");
   if (!sets.length && !dels.length && !recSets.length && !shopSets.length) { alert("바꿀 내용이 없습니다. 지금 목록에 백업의 내용이 모두 있습니다."); return; }
   const msg = (sets.length ? `품목 ${sets.length}개를 백업 내용으로 저장합니다.` : "") +
     (recSets.length || shopSets.length ? `\n레시피 ${recSets.length}개, 살 것 ${shopSets.length}개를 백업 내용으로 저장합니다.` : "") +
