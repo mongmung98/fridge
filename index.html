@@ -408,7 +408,7 @@
   <p class="meta" id="b_last"></p>
 
   <h4 class="sec">백업 파일 저장</h4>
-  <p class="meta" style="margin-top:0">지금 등록된 식자재 전체(다 쓴 품목 포함)를 파일 하나로 저장합니다.
+  <p class="meta" style="margin-top:0">지금 등록된 식자재 전체(다 쓴 품목 포함), 레시피북, 살 것 목록을 파일 하나로 저장합니다.
     가족 정보가 들어 있으니 다른 사람에게 보내지 마세요.</p>
   <div class="btns">
     <button type="button" class="primary" id="b_download">파일로 저장</button>
@@ -973,12 +973,46 @@ const isRealDate = v => typeof v === "string" && DATE_RE.test(v) && normDate(v).
 const toIso = v => (v && typeof v.toDate === "function") ? v.toDate().toISOString() : (typeof v === "string" ? v : null);
 const okIso = v => { if (typeof v !== "string") return null; const t = Date.parse(v); if (isNaN(t)) return null; const y = new Date(t).getUTCFullYear(); return y >= 1 && y <= 9999 ? new Date(t).toISOString() : null; };
 
-function buildBackup(list, exportedAt) {
-  return {
-    app: BACKUP_APP, version: 1, exportedAt,
-    items: list.map(it => ({ ...it, createdAt: toIso(it.createdAt), updatedAt: toIso(it.updatedAt) }))
-  };
+function buildBackup(list, exportedAt, recs = [], shop = []) {
+  const plain = x => ({ ...x, createdAt: toIso(x.createdAt), updatedAt: toIso(x.updatedAt) });
+  return { app: BACKUP_APP, version: 2, exportedAt, items: list.map(plain), recipes: recs.map(plain), shopping: shop.map(plain) };
 }
+// 백업 속 레시피·살 것 검사 (이상한 것은 건너뜀)
+function parseExtraBackup(arr, kind) {
+  const out = [], skipped = [], seen = new Set();
+  for (const x of Array.isArray(arr) ? arr.slice(0, 3000) : []) {
+    const id = x && typeof x === "object" ? String(x.id ?? "") : "";
+    const label = String(x?.name ?? "(이름 없음)").slice(0, 20);
+    const name = typeof x?.name === "string" ? x.name.trim() : "";
+    if (!ID_RE.test(id) || /^__.*__$/.test(id) || seen.has(id) || !name || name.length > 40) { skipped.push(label); continue; }
+    if (kind === "shopping") {
+      seen.add(id);
+      out.push({ id, data: { name, qty: String(x.qty ?? "").slice(0, 20), done: !!x.done, createdAt: okIso(x.createdAt) } });
+      continue;
+    }
+    const type = ["mine", "web", "claude"].includes(x.type) ? x.type : null;
+    let url = typeof x.sourceUrl === "string" ? x.sourceUrl.trim() : "";
+    try { if (url && !/^https?:$/.test(new URL(url).protocol)) url = ""; } catch (e) { url = ""; }
+    if (!type || (type === "web" && !url)) { skipped.push(label); continue; }
+    const strs = (a, n) => (Array.isArray(a) ? a : []).filter(v => typeof v === "string").map(v => v.slice(0, n)).filter(Boolean).slice(0, 40);
+    const serv = Math.round(Number(x.servings));
+    seen.add(id);
+    out.push({ id, data: {
+      type, name,
+      ingredients: (Array.isArray(x.ingredients) ? x.ingredients : []).filter(g => g && typeof g.name === "string" && g.name.trim())
+        .map(g => ({ name: g.name.trim().slice(0, 40), qty: String(g.qty ?? "").slice(0, 20) })).slice(0, 40),
+      seasonings: strs(x.seasonings, 40),
+      servings: serv > 0 ? Math.min(20, serv) : null,
+      steps: String(x.steps ?? "").slice(0, type === "mine" ? 1000 : 300),
+      memo: String(x.memo ?? "").slice(0, 300),
+      sourceName: String(x.sourceName ?? "").slice(0, 40), sourceUrl: url,
+      createdAt: okIso(x.createdAt)
+    }});
+  }
+  return { list: out, skipped };
+}
+// 레시피·살 것은 지우지 않음: 없는 것만(missing) 또는 덮어쓰기
+const extraPlan = (parsedList, currentIds, mode) => mode === "missing" ? parsedList.filter(x => !currentIds.includes(x.id)) : parsedList;
 
 // 백업 글 → { items: [{id, data}], allIds: 파일에 있던 모든 식별 번호, skipped: [사유], error }
 function parseBackup(text) {
@@ -1018,7 +1052,9 @@ function parseBackup(text) {
       createdAt: okIso(it.createdAt)
     }});
   }
-  return { items: out, allIds: [...allIds], skipped, exportedAt: typeof obj.exportedAt === "string" ? obj.exportedAt : "" };
+  const rec = parseExtraBackup(obj.recipes, "recipes"), shp = parseExtraBackup(obj.shopping, "shopping");
+  return { items: out, allIds: [...allIds], skipped, exportedAt: typeof obj.exportedAt === "string" ? obj.exportedAt : "",
+    recipes: rec.list, shopping: shp.list, extraSkipped: rec.skipped.length + shp.skipped.length };
 }
 
 // 되돌리기 계획: mode = missing(없는 것만) / overwrite(덮어쓰기) / replace(완전히)
@@ -2437,7 +2473,7 @@ function lastBackupText() {
   const n = diffDays(d, todayStr());
   return `이 기기에서 마지막 백업: ${d} (${n === 0 ? "오늘" : n + "일 전"})`;
 }
-function backupJson() { return JSON.stringify(buildBackup(items, new Date().toISOString()), null, 1); }
+function backupJson() { return JSON.stringify(buildBackup(items, new Date().toISOString(), recipes, shopping), null, 1); }
 function markBackedUp() { try { localStorage.setItem("lastBackup", todayStr()); } catch (e) {} $("b_last").textContent = lastBackupText(); }
 
 $("backupBtn").onclick = () => {
@@ -2455,7 +2491,7 @@ $("b_close").onclick = () => $("backupDialog").close();
 $("backupDialog").addEventListener("cancel", e => { if (restoring) e.preventDefault(); });
 
 $("b_download").onclick = async () => {
-  if (!items.length) { alert("백업할 식자재가 없습니다."); return; }
+  if (!items.length && !recipes.length && !shopping.length) { alert("백업할 내용이 없습니다."); return; }
   const name = `냉장고-백업-${todayStr()}.json`;
   const file = new File([backupJson()], name, { type: "application/json" });
   // 휴대폰: 공유 창(파일 앱에 저장 등)으로 저장 — 끝까지 저장했을 때만 '백업함'으로 기록
@@ -2478,7 +2514,7 @@ $("b_download").onclick = async () => {
   $("b_dlMsg").textContent = `${items.length}개 품목 파일 내려받기를 시작했습니다. 내려받은 파일이 안 보이면 [내용 복사]를 써 주세요.`;
 };
 $("b_copy").onclick = async () => {
-  if (!items.length) { alert("백업할 식자재가 없습니다."); return; }
+  if (!items.length && !recipes.length && !shopping.length) { alert("백업할 내용이 없습니다."); return; }
   try {
     await navigator.clipboard.writeText(backupJson());
     markBackedUp();
@@ -2492,15 +2528,18 @@ function showRestorePreview(text) {
   pendingRestore = null;
   const r = parseBackup(text);
   if (r.error) { alert(r.error); return; }
-  if (!r.items.length) { alert("되살릴 수 있는 품목이 없습니다." + (r.skipped.length ? "\n값이 이상해 건너뛴 품목: " + r.skipped.length + "개" : "")); return; }
+  if (!r.items.length && !r.recipes.length && !r.shopping.length) { alert("되살릴 수 있는 내용이 없습니다." + (r.skipped.length ? "\n값이 이상해 건너뛴 품목: " + r.skipped.length + "개" : "")); return; }
   pendingRestore = r;
   const ids = items.map(x => x.id);
   const m = restorePlan(r, ids, "missing"), o = restorePlan(r, ids, "overwrite"), x = restorePlan(r, ids, "replace");
   const when = r.exportedAt ? r.exportedAt.slice(0, 10) + " 백업" : "백업";
   $("b_summary").innerHTML = `<b>${esc(when)}</b>: 품목 ${r.items.length}개` +
-    `<br><span class="meta">이 중 ${m.sets.length}개는 지금 없는 품목이고, ${r.items.length - m.sets.length}개는 지금도 있는 품목입니다.</span>`;
-  $("b_warn").textContent = r.skipped.length
-    ? `값이 이상해서 건너뛸 품목 ${r.skipped.length}개 (지금 있는 같은 품목은 그대로 둡니다): ${r.skipped.slice(0, 3).join(", ")}${r.skipped.length > 3 ? " …" : ""}` : "";
+    `<br><span class="meta">이 중 ${m.sets.length}개는 지금 없는 품목이고, ${r.items.length - m.sets.length}개는 지금도 있는 품목입니다.</span>` +
+    (r.recipes.length || r.shopping.length ? `<br><span class="meta">레시피 ${r.recipes.length}개 (지금 없는 것 ${extraPlan(r.recipes, recipes.map(x => x.id), "missing").length}개), ` +
+      `살 것 ${r.shopping.length}개 (지금 없는 것 ${extraPlan(r.shopping, shopping.map(x => x.id), "missing").length}개). 레시피·살 것은 어떤 방식이든 지우지 않습니다.</span>` : "");
+  $("b_warn").textContent = (r.skipped.length
+    ? `값이 이상해서 건너뛸 품목 ${r.skipped.length}개 (지금 있는 같은 품목은 그대로 둡니다): ${r.skipped.slice(0, 3).join(", ")}${r.skipped.length > 3 ? " …" : ""}` : "") +
+    (r.extraSkipped ? ` 건너뛸 레시피·살 것 ${r.extraSkipped}개.` : "");
   $("b_missingLabel").textContent = `없는 품목만 되살리기 (${m.sets.length}개): 지금 있는 품목은 건드리지 않습니다`;
   $("b_overwriteLabel").textContent = `덮어쓰기 (${o.sets.length}개): 지금도 있는 품목은 백업 때 내용으로 바뀝니다. 그 뒤에 쓴 양·수정이 사라집니다`;
   $("b_replaceLabel").textContent = x.dels.length
@@ -2529,8 +2568,11 @@ $("b_restore").onclick = async () => {
   if (isOffline()) { alert("지금 인터넷에 연결되어 있지 않습니다. 연결된 뒤 되돌려 주세요."); return; }
   const mode = document.querySelector('input[name="b_mode"]:checked').value;
   const { sets, dels } = restorePlan(pendingRestore, items.map(x => x.id), mode);   // 누르는 순간의 목록으로 다시 계산
-  if (!sets.length && !dels.length) { alert("바꿀 내용이 없습니다. 지금 목록에 백업의 품목이 모두 있습니다."); return; }
+  const recSets = extraPlan(pendingRestore.recipes, recipes.map(x => x.id), mode);
+  const shopSets = extraPlan(pendingRestore.shopping, shopping.map(x => x.id), mode);
+  if (!sets.length && !dels.length && !recSets.length && !shopSets.length) { alert("바꿀 내용이 없습니다. 지금 목록에 백업의 내용이 모두 있습니다."); return; }
   const msg = (sets.length ? `품목 ${sets.length}개를 백업 내용으로 저장합니다.` : "") +
+    (recSets.length || shopSets.length ? `\n레시피 ${recSets.length}개, 살 것 ${shopSets.length}개를 백업 내용으로 저장합니다.` : "") +
     (mode !== "missing" && sets.length ? "\n지금도 있는 품목은 백업 때 내용으로 바뀝니다." : "") +
     (dels.length ? `\n\n백업에 없는 지금 품목 ${dels.length}개를 삭제합니다. 삭제하면 되돌릴 수 없습니다.` : "") +
     "\n\n진행할까요?";
@@ -2542,6 +2584,11 @@ $("b_restore").onclick = async () => {
       createdAt: x.data.createdAt ? Timestamp.fromDate(new Date(x.data.createdAt)) : serverTimestamp(),
       updatedAt: serverTimestamp(), updatedBy: who()
     })),
+    ...[[recSets, recipesCol], [shopSets, shopCol]].flatMap(([list, col]) => list.map(x => b => b.set(doc(col, x.id), {
+      ...x.data,
+      createdAt: x.data.createdAt ? Timestamp.fromDate(new Date(x.data.createdAt)) : serverTimestamp(),
+      updatedAt: serverTimestamp(), updatedBy: who()
+    }))),
     ...dels.map(id => b => b.delete(doc(db, "items", id)))
   ];
   let batches;
@@ -2562,7 +2609,7 @@ $("b_restore").onclick = async () => {
   try {
     await Promise.all(batches.map(b => b.commit()));
     $("b_restoreMsg").textContent = "";
-    alert(`되돌리기 완료: ${sets.length}개 저장${dels.length ? `, ${dels.length}개 삭제` : ""}`);
+    alert(`되돌리기 완료: 품목 ${sets.length}개 저장${dels.length ? `, ${dels.length}개 삭제` : ""}${recSets.length || shopSets.length ? `, 레시피 ${recSets.length}개·살 것 ${shopSets.length}개 저장` : ""}`);
     $("backupDialog").close();
   } catch (err) {
     $("b_restoreMsg").textContent = "되돌리기 중 오류가 났습니다 (" + (err.code || err.message) + "). 목록을 확인해 주세요.";
