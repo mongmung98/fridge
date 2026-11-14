@@ -63,6 +63,12 @@
   .item-act{display:flex;gap:4px;padding-right:10px}
   .mini{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:0 12px;min-height:38px;font-size:14px}
   .mini.fill{border-color:var(--accent);color:var(--accent);font-weight:600}
+  .selbox{width:20px;height:20px;border:1.5px solid var(--faint);border-radius:5px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;font-size:13px;color:#fff}
+  .selbox.on{background:var(--accent);border-color:var(--accent)}
+  .item.selected{background:var(--accent-soft)}
+  .selbar{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--surface);border-top:1px solid var(--line);
+    padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .selbar .count{margin-right:auto;font-weight:600}
   .item-detail{grid-column:1 / -1;padding:0 14px 12px 29px;font-size:15px;color:var(--sub)}
   .item-detail dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:0}
   .item-detail dt{color:var(--faint)} .item-detail dd{margin:0;color:var(--ink);font-variant-numeric:tabular-nums}
@@ -167,7 +173,10 @@
         <button id="pasteBtn">Claude 정리</button>
         <button id="addBtn2">직접 추가</button>
       </div>
-      <input id="searchBox" type="search" placeholder="품목 검색" style="margin-bottom:10px">
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        <input id="searchBox" type="search" placeholder="품목 검색" style="flex:1">
+        <button class="mini" id="selToggle" style="flex:0 0 auto">선택</button>
+      </div>
       <div class="filters">
         <div class="chips" id="storageChips">
           <button class="chip on" data-st="전체">전체</button>
@@ -217,6 +226,13 @@
     </div>
   </main>
   <button class="fab" id="addBtn" aria-label="식자재 추가">+</button>
+  <div class="selbar hidden" id="selBar" aria-live="polite">
+    <span class="count" id="selCount">0개 선택</span>
+    <button class="mini" id="selAll">보이는 것 모두</button>
+    <button class="mini fill" id="selUsed">다 씀 처리</button>
+    <button class="mini danger" id="selPurge">완전 삭제</button>
+    <button class="mini" id="selCancel">취소</button>
+  </div>
 </div>
 
 <!-- 식자재 추가/수정 창 -->
@@ -561,6 +577,9 @@ let gpsEst = false;
 let qRows = [];
 let viewMode = "simple";          // simple = 간단히, detail = 자세히
 const openIds = new Set();        // 간단히 보기에서 펼친 품목
+let selectMode = false;           // 선택 삭제 모드
+let visibleIds = [];              // 지금 식자재 탭에 보이는 품목
+const selectedIds = new Set();
 try { if (localStorage.getItem("viewMode") === "detail") viewMode = "detail"; } catch (e) {}
 let recipes = [];
 let unsubRecipes = null;
@@ -624,6 +643,7 @@ onAuthStateChanged(auth, user => {
       : (snap.metadata.fromCache ? "오프라인 — 연결되면 자동으로 저장됩니다" : "모든 변경 저장됨");
     show("appView");
     render();
+    if (selectMode) updateSelBar();
   }, err => {
     if (err.code === "permission-denied") {
       $("deniedEmail").textContent = user.email;
@@ -684,6 +704,15 @@ function rowHtml(it, right = "qty", showStorage = false) {
   const rightTxt = right === "dday" ? ddayText(it) : shortAmount(it);
   const tag = right === "dday" || showStorage ? `<span class="item-tag">${esc(it.storage)}</span>` : "";
   const estTag = right === "dday" && it.expiry && it.expiryEstimated ? '<span class="tape est">추정</span>' : "";
+  if (selectMode && right === "qty") {   // 선택 모드: 줄을 누르면 선택
+    const on = selectedIds.has(it.id);
+    return `<div class="item ${on ? "selected" : ""}">
+      <button class="item-main" data-act="select" data-id="${esc(it.id)}" aria-pressed="${on}">
+        <span class="selbox ${on ? "on" : ""}">${on ? "✓" : ""}</span>
+        <span class="item-name">${esc(it.name)}</span>${tag}
+        <span class="item-qty">${esc(rightTxt)}</span>
+      </button><div></div></div>`;
+  }
   return `<div class="item">
     <button class="item-main" data-act="toggle" data-id="${esc(it.id)}" aria-expanded="${open}">
       <span class="item-name">${esc(it.name)}</span>${tag}
@@ -707,6 +736,14 @@ function rowHtml(it, right = "qty", showStorage = false) {
 }
 
 function usedRowHtml(it) {
+  if (selectMode) {
+    const on = selectedIds.has(it.id);
+    return `<div class="item used ${on ? "selected" : ""}">
+      <button class="item-main" data-act="select" data-id="${esc(it.id)}" aria-pressed="${on}">
+        <span class="selbox ${on ? "on" : ""}">${on ? "✓" : ""}</span><span class="item-name">${esc(it.name)}</span>
+        <span class="item-qty">다 씀</span>
+      </button><div></div></div>`;
+  }
   return `<div class="item used">
     <div class="item-main" style="cursor:default"><span class="item-name">${esc(it.name)}</span></div>
     <div class="item-act">
@@ -726,6 +763,7 @@ function renderItems() {
     (!q || String(it.name || "").includes(q) || String(it.baseName || "").includes(q)));
   const active = sortItems(list.filter(it => it.status !== "다씀"));
   const used = sortItems(list.filter(it => it.status === "다씀"));
+  visibleIds = [...active, ...($("showUsed").checked ? used : [])].map(it => it.id);
   let html;
   if (!active.length) {
     html = '<div class="list"><p class="empty">' + (q || storageFilter !== "전체"
@@ -774,7 +812,8 @@ document.querySelectorAll("nav.tabs button").forEach(b => b.onclick = () => {
   $("itemsTab").classList.toggle("hidden", b.dataset.tab !== "items");
   $("expiryTab").classList.toggle("hidden", b.dataset.tab !== "expiry");
   $("menuTab").classList.toggle("hidden", b.dataset.tab !== "menu");
-  $("addBtn").classList.toggle("hidden", b.dataset.tab === "menu");
+  $("addBtn").classList.toggle("hidden", b.dataset.tab !== "items" && b.dataset.tab !== "expiry");
+  if (selectMode && b.dataset.tab !== "items") setSelectMode(false);
 });
 document.querySelectorAll("#storageChips .chip").forEach(c => c.onclick = () => {
   storageFilter = c.dataset.st;
@@ -798,6 +837,11 @@ document.addEventListener("click", async e => {
   if (!b) return;
   const it = items.find(x => x.id === b.dataset.id);
   if (!it) return;
+  if (b.dataset.act === "select") {
+    selectedIds.has(it.id) ? selectedIds.delete(it.id) : selectedIds.add(it.id);
+    renderItems(); updateSelBar();
+    return;
+  }
   if (b.dataset.act === "toggle") {
     if (viewMode === "detail") return;
     openIds.has(it.id) ? openIds.delete(it.id) : openIds.add(it.id);
@@ -812,6 +856,51 @@ document.addEventListener("click", async e => {
     }
   }
 });
+
+// ===== 선택해서 다 씀 처리 / 완전 삭제 =====
+function setSelectMode(on) {
+  selectMode = on;
+  selectedIds.clear();
+  $("selToggle").textContent = on ? "선택 끝" : "선택";
+  $("selBar").classList.toggle("hidden", !on);
+  $("addBtn").classList.toggle("hidden", on);
+  renderItems(); updateSelBar();
+}
+function updateSelBar() {
+  for (const id of [...selectedIds]) if (!items.some(it => it.id === id)) selectedIds.delete(id);   // 다른 가족이 지운 품목 정리
+  $("selCount").textContent = `${selectedIds.size}개 선택`;
+  $("selUsed").disabled = $("selPurge").disabled = !selectedIds.size;
+}
+// 여러 건을 400건씩 나눠 한꺼번에 저장 (모든 묶음을 먼저 만들어 기기에 예약)
+async function commitInChunks(ops) {
+  const batches = [];
+  for (let i = 0; i < ops.length; i += 400) { const b = writeBatch(db); ops.slice(i, i + 400).forEach(op => op(b)); batches.push(b); }
+  await Promise.all(batches.map(b => b.commit()));
+}
+$("selToggle").onclick = () => setSelectMode(!selectMode);
+$("selCancel").onclick = () => setSelectMode(false);
+$("selAll").onclick = () => {
+  const all = visibleIds.length && visibleIds.every(id => selectedIds.has(id));
+  visibleIds.forEach(id => all ? selectedIds.delete(id) : selectedIds.add(id));
+  renderItems(); updateSelBar();
+};
+$("selUsed").onclick = async () => {
+  const list = items.filter(it => selectedIds.has(it.id) && it.status !== "다씀");
+  if (!list.length) { alert("선택한 품목이 이미 모두 다 쓴 상태입니다."); return; }
+  if (!confirm(`${list.length}개 품목을 다 쓴 것으로 처리할까요?\n('다 쓴 품목 보기'에서 다시 채울 수 있습니다)`)) return;
+  setSelectMode(false);
+  try { await commitInChunks(list.map(it => b => b.update(doc(db, "items", it.id), { amount: 0, status: "다씀", updatedAt: serverTimestamp(), updatedBy: who() }))); }
+  catch (err) { alert("저장 실패: " + err.code); }
+};
+$("selPurge").onclick = async () => {
+  const list = items.filter(it => selectedIds.has(it.id));
+  if (!list.length) return;
+  const names = list.slice(0, 5).map(it => it.name).join(", ") + (list.length > 5 ? ` 외 ${list.length - 5}개` : "");
+  if (!confirm(`${list.length}개 품목을 완전히 삭제할까요?\n${names}\n\n삭제하면 되돌릴 수 없습니다. (다 쓴 것이면 [다 씀 처리]를 권합니다)`)) return;
+  setSelectMode(false);
+  try { await commitInChunks(list.map(it => b => b.delete(doc(db, "items", it.id)))); }
+  catch (err) { alert("삭제 실패: " + err.code); }
+};
 
 // ===== 저장 전 값 검사 (직접 추가·일괄 저장 공통) =====
 function checkItem({ name, amount, qtyType, category, storage }) {
