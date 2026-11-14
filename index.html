@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#2f7d5b">
+<!-- 홈 화면 앱 설정 -->
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="냉장고">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>우리집 냉장고</title>
 <style>
   :root{--bg:#f6f7f9;--card:#fff;--text:#222;--sub:#666;--line:#e3e5e8;--main:#2f7d5b;--red:#d93838;--yellow:#c48a00;}
@@ -36,19 +43,22 @@
   .bar>div{height:100%;background:var(--main)}
   .fab{position:fixed;right:20px;bottom:calc(24px + env(safe-area-inset-bottom));width:56px;height:56px;border-radius:50%;background:var(--main);color:#fff;font-size:30px;border:none;box-shadow:0 2px 8px rgba(0,0,0,.25)}
   h2.group{font-size:15px;margin:18px 4px 8px}
-  dialog{border:none;border-radius:12px;padding:16px;width:min(92vw,440px);max-height:90vh;overflow:auto}
+  dialog{border:none;border-radius:12px;padding:16px;width:min(94vw,460px);max-height:90vh;overflow:auto}
   dialog::backdrop{background:rgba(0,0,0,.4)}
   dialog h3{margin:0 0 8px}
   label{display:block;font-size:13px;color:var(--sub);margin:10px 0 4px}
-  input,select{width:100%;padding:9px;font-size:16px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--text);font-family:inherit}
+  input,select,textarea{width:100%;padding:9px;font-size:16px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--text);font-family:inherit}
   .inline{display:flex;gap:8px;align-items:flex-end}
-  .inline>*{flex:1}
+  .inline>*{flex:1;min-width:0}
   .hint{font-size:12px;color:#8a6200;margin-top:4px}
   .center{text-align:center;padding:40px 16px}
   .hidden{display:none!important}
   .status{font-size:12px;color:var(--sub);text-align:center;margin:0 0 8px}
   .check{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--sub);margin-top:12px}
   .check input{width:auto}
+  .qrow{border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px;background:#fafbfc}
+  .qrow .inline{margin-top:6px}
+  .linkbtn{border:none!important;background:none!important;padding:4px!important}
 </style>
 </head>
 <body>
@@ -83,6 +93,10 @@
     <p class="status" id="syncStatus"></p>
 
     <div id="itemsTab">
+      <div class="btns" style="margin:0 0 10px">
+        <button class="primary" id="quickBtn">⚡ 빠른 입력</button>
+        <button id="addBtn2">+ 직접 추가</button>
+      </div>
       <div class="chips" id="storageChips">
         <button class="chip on" data-st="전체">전체</button>
         <button class="chip" data-st="냉장">냉장</button>
@@ -171,10 +185,40 @@
   </div>
 </dialog>
 
+<!-- 빠른 입력 창 -->
+<dialog id="quickDialog">
+  <h3>⚡ 빠른 입력</h3>
+  <div id="q_step1">
+    <p class="meta">쉼표(,)나 줄바꿈으로 구분해서 대충 적어 주세요.<br>
+      예: 대파 한 단, 두부 2모, 계란 한 판, 돼지고기 앞다리 600g</p>
+    <textarea id="q_text" rows="6" placeholder="대파 한 단, 두부 2모, 계란 한 판"></textarea>
+    <div class="btns" style="justify-content:flex-end;margin-top:12px">
+      <button type="button" id="q_cancel1">취소</button>
+      <button type="button" class="primary" id="q_parse">해석하기</button>
+    </div>
+  </div>
+  <div id="q_step2" class="hidden">
+    <p class="meta">해석 결과를 확인하고 틀린 부분을 고쳐 주세요.<br><b>[모두 저장]을 눌러야 저장됩니다.</b></p>
+    <div class="inline">
+      <div><label>구매처</label>
+        <select id="q_source"><option>시장</option><option>네이버</option><option>컬리</option><option>이마트몰</option><option>기타</option></select></div>
+      <div><label>구매일</label><input id="q_purchasedAt" type="date"></div>
+    </div>
+    <div id="q_rows" style="margin-top:12px"></div>
+    <div class="btns" style="justify-content:space-between;margin-top:12px">
+      <button type="button" id="q_back">← 다시 입력</button>
+      <div style="display:flex;gap:6px">
+        <button type="button" id="q_cancel2">취소</button>
+        <button type="button" class="primary" id="q_save">모두 저장</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // ===== Firebase 설정값 (공개되어도 되는 값) =====
 const firebaseConfig = {
@@ -194,6 +238,7 @@ const db = initializeFirestore(app, {
 const itemsCol = collection(db, "items");
 
 // ===== 기본값 (일반적인 참고값 — 정확하지 않을 수 있음) =====
+const CATS = ["신선채소", "육류·생선", "유제품·계란", "두부·가공식품", "양념·소스", "기타"];
 // 분류·보관장소별 일반 보관 기간(일)
 const SHELF = {
   "신선채소":     { "냉장": 7,   "냉동": 30,  "실온": 3 },
@@ -205,6 +250,27 @@ const SHELF = {
 };
 // 분류별 1인분 기준(g)
 const GPS = { "신선채소":100, "육류·생선":150, "유제품·계란":100, "두부·가공식품":100, "양념·소스":15, "기타":100 };
+
+// ===== 빠른 입력 해석용 사전 =====
+// 품목명에 들어 있는 단어로 분류 추측 (위에서부터 먼저 검사)
+const CAT_HINTS = [
+  ["양념·소스", ["간장","된장","고추장","쌈장","소스","케첩","케찹","마요","식초","설탕","소금","참기름","들기름","식용유","올리브유","액젓","다시다","물엿","올리고당","후추","고춧가루","카레"]],
+  ["두부·가공식품", ["두부","어묵","햄","소시지","만두","떡","김치","유부","맛살","라면","우동","국수","통조림","참치"]],
+  ["유제품·계란", ["우유","계란","달걀","치즈","요거트","요구르트","버터","생크림"]],
+  ["육류·생선", ["고기","돼지","소고기","한우","닭","오리","삼겹","목살","앞다리","뒷다리","갈비","등심","안심","베이컨","생선","고등어","갈치","연어","오징어","새우","조개","꽃게","낙지","주꾸미","동태"]],
+  ["신선채소", ["파","양파","마늘","시금치","배추","양배추","상추","깻잎","부추","미나리","무","당근","감자","고구마","호박","오이","가지","버섯","콩나물","숙주","고추","파프리카","피망","브로콜리","토마토","사과","배","바나나","귤","딸기","열무","생강","청경채","레몬","아보카도","샐러드"]]
+];
+// 실온 보관이 흔한 품목
+const ROOM_HINTS = ["라면","쌀","국수","통조림","참치","감자","고구마","양파","바나나","설탕","소금","식용유","올리브유","참기름","카레","후추"];
+// 단/포기/묶음/통 → g 환산 (추정값)
+const UNIT_W = {
+  "대파": { "단": 700 }, "쪽파": { "단": 500 }, "시금치": { "단": 250, "묶음": 250 },
+  "부추": { "단": 300, "묶음": 300 }, "미나리": { "단": 300 }, "열무": { "단": 1500 },
+  "양배추": { "통": 1500 }, "배추": { "포기": 2500, "통": 2500 }
+};
+const NUM = { "하나":1, "한":1, "둘":2, "두":2, "셋":3, "세":3, "석":3, "넷":4, "네":4, "다섯":5, "여섯":6, "일곱":7, "여덟":8, "아홉":9, "열":10, "반":0.5 };
+const NUMWORDS = "하나|한|둘|두|셋|세|석|넷|네|다섯|여섯|일곱|여덟|아홉|열|반";
+const UNITS = "킬로그램|kg|킬로|그램|g|ml|리터|l|근|봉지|봉|개|알|구|모|팩|병|캔|통|마리|포기|송이|줄|장|단|묶음|망|박스|판";
 
 // ===== 공통 도구 =====
 const $ = id => document.getElementById(id);
@@ -244,6 +310,7 @@ let editingId = null;
 let usingId = null;
 let expEst = false;
 let gpsEst = false;
+let qRows = [];
 
 function show(view) {
   ["loadingView", "loginView", "deniedView", "appView"].forEach(v => $(v).classList.toggle("hidden", v !== view));
@@ -341,7 +408,7 @@ function renderItems() {
   const used = sortItems(list.filter(it => it.status === "다씀"));
   let html = active.length
     ? active.map(cardHtml).join("")
-    : '<p class="center meta">등록된 식자재가 없습니다.<br>오른쪽 아래 + 버튼으로 추가하세요.</p>';
+    : '<p class="center meta">등록된 식자재가 없습니다.<br>⚡ 빠른 입력이나 + 버튼으로 추가하세요.</p>';
   if ($("showUsed").checked) {
     html += '<h2 class="group">다 쓴 품목</h2>' + (used.length ? used.map(usedCardHtml).join("") : '<p class="meta">없음</p>');
   }
@@ -446,6 +513,7 @@ function openItemDialog(it) {
 }
 
 $("addBtn").onclick = () => openItemDialog(null);
+$("addBtn2").onclick = () => openItemDialog(null);
 $("f_cancel").onclick = () => $("itemDialog").close();
 $("f_qtyType").onchange = () => { updateFormUnits(); if ($("f_qtyType").value === "weight") fillDefaultGps(); updateHints(); };
 $("f_category").onchange = () => { fillDefaultGps(); updateHints(); };
@@ -572,6 +640,180 @@ $("u_ok").onclick = () => {
 $("u_all").onclick = () => {
   const it = items.find(i => i.id === usingId);
   if (it && confirm(`'${it.name}'을(를) 전부 사용한 것으로 처리할까요?`)) applyUse(0);
+};
+
+// ===== 빠른 입력: 해석 =====
+function guessCategory(name) {
+  for (const [cat, words] of CAT_HINTS) {
+    if (words.some(w => name.includes(w))) return cat;
+  }
+  return "기타";
+}
+function guessStorage(name) {
+  if (name.includes("냉동")) return "냉동";
+  if (ROOM_HINTS.some(w => name.includes(w))) return "실온";
+  return "냉장";
+}
+
+function parseLine(raw) {
+  let text = raw.trim();
+
+  // 1) 유통기한 날짜(2026-11-20 형식)가 있으면 따로 떼어냄
+  let expiry = "";
+  const dm = text.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  if (dm) {
+    expiry = `${dm[1]}-${pad(Number(dm[2]))}-${pad(Number(dm[3]))}`;
+    text = text.replace(dm[0], " ").replace(/유통기한|소비기한|까지|:/g, " ");
+  }
+
+  // 2) 수량 찾기: 숫자(2모, 600g) 우선, 없으면 한글 숫자(한 단, 두 개)
+  let num = null, unit = "", start = -1, len = 0, m, last = null;
+  const dre = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(${UNITS})?(?![가-힣a-zA-Z])`, "gi");
+  while ((m = dre.exec(text))) last = m;
+  if (last) {
+    num = Number(last[1]); unit = (last[2] || "").toLowerCase();
+    start = last.index; len = last[0].length;
+  } else {
+    const wre = new RegExp(`(^|\\s)(${NUMWORDS})\\s*(${UNITS})?(?=\\s|$)`, "gi");
+    while ((m = wre.exec(text))) last = m;
+    if (last) {
+      num = NUM[last[2]]; unit = (last[3] || "").toLowerCase();
+      start = last.index + last[1].length; len = last[0].length - last[1].length;
+    }
+  }
+
+  // 3) 남은 글자를 품목명으로
+  const name = (start >= 0 ? text.slice(0, start) + " " + text.slice(start + len) : text).replace(/\s+/g, " ").trim();
+  const category = guessCategory(name);
+  const storage = guessStorage(name);
+
+  // 4) 단위 환산
+  let qtyType = "count", amount = num ?? 1;
+  const notes = [];
+  if (num == null) notes.push("수량이 없어 1개로 넣었습니다");
+  const W = { "g":1, "그램":1, "kg":1000, "킬로":1000, "킬로그램":1000, "ml":1, "l":1000, "리터":1000 };
+  if (unit in W) {
+    qtyType = "weight"; amount = amount * W[unit];
+    if (["ml", "l", "리터"].includes(unit)) notes.push("부피(ml)를 g으로 대략 바꿨습니다 (추정)");
+  } else if (unit === "근") {
+    const g = category === "신선채소" ? 375 : 600;
+    qtyType = "weight"; amount = amount * g;
+    notes.push(`1근 = ${g}g으로 계산했습니다 (추정)`);
+  } else if (unit === "판") {
+    amount = amount * 30;
+    notes.push("1판 = 30개로 계산했습니다 (추정)");
+  } else if (["단", "포기", "묶음", "통"].includes(unit)) {
+    const key = Object.keys(UNIT_W).find(k => name.includes(k));
+    const g = key && UNIT_W[key][unit];
+    if (g) {
+      qtyType = "weight"; amount = amount * g;
+      notes.push(`1${unit} ≈ ${g}g으로 계산했습니다 (추정) — 실제 무게로 고쳐 주세요`);
+    } else {
+      notes.push(`'${unit}' 단위를 개수로 넣었습니다`);
+    }
+  }
+  return { raw: raw.trim(), name, category, storage, qtyType, amount: round1(amount), expiry, note: notes.join(" / ") };
+}
+
+function parseText(text) {
+  return text.split(/[,\n，、]+|\s+그리고\s+/).map(s => s.trim()).filter(Boolean).map(parseLine);
+}
+
+// ===== 빠른 입력: 확인 화면 =====
+function qRowHtml(r, i) {
+  const opt = (list, cur) => list.map(([v, t]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${t}</option>`).join("");
+  return `<div class="qrow" data-i="${i}">
+    <div class="row">
+      <span class="meta" style="margin:0">입력: ${esc(r.raw)}</span>
+      <button type="button" class="danger linkbtn" data-qdel="${i}">✕ 빼기</button>
+    </div>
+    <input data-f="name" value="${esc(r.name)}" placeholder="품목명" style="margin-top:6px">
+    <div class="inline">
+      <select data-f="category">${opt(CATS.map(c => [c, c]), r.category)}</select>
+      <select data-f="storage">${opt([["냉장","냉장"],["냉동","냉동"],["실온","실온"]], r.storage)}</select>
+    </div>
+    <div class="inline">
+      <select data-f="qtyType">${opt([["weight","무게 (g)"],["count","개수 (개)"],["percent","비율 (%)"]], r.qtyType)}</select>
+      <input data-f="amount" type="number" inputmode="decimal" min="0" step="any" value="${r.amount}">
+    </div>
+    <label>유통기한 (비워 두면 추정값 자동 입력)</label>
+    <input data-f="expiry" type="date" value="${esc(r.expiry)}">
+    ${r.note ? `<div class="hint">⚠ ${esc(r.note)}</div>` : ""}
+  </div>`;
+}
+function renderQRows() {
+  $("q_rows").innerHTML = qRows.length
+    ? qRows.map(qRowHtml).join("")
+    : '<p class="meta">남은 품목이 없습니다. [← 다시 입력]을 눌러 주세요.</p>';
+}
+function readQRows() {
+  document.querySelectorAll("#q_rows .qrow").forEach(el => {
+    const r = qRows[Number(el.dataset.i)];
+    el.querySelectorAll("[data-f]").forEach(f => { r[f.dataset.f] = f.value; });
+  });
+}
+
+$("quickBtn").onclick = () => {
+  $("q_text").value = "";
+  $("q_step1").classList.remove("hidden");
+  $("q_step2").classList.add("hidden");
+  $("quickDialog").showModal();
+};
+$("q_cancel1").onclick = () => $("quickDialog").close();
+$("q_cancel2").onclick = () => $("quickDialog").close();
+$("q_back").onclick = () => {
+  $("q_step2").classList.add("hidden");
+  $("q_step1").classList.remove("hidden");
+};
+$("q_parse").onclick = () => {
+  const text = $("q_text").value.trim();
+  if (!text) { alert("내용을 입력해 주세요."); return; }
+  qRows = parseText(text);
+  $("q_purchasedAt").value = todayStr();
+  renderQRows();
+  $("q_step1").classList.add("hidden");
+  $("q_step2").classList.remove("hidden");
+};
+$("q_rows").addEventListener("click", e => {
+  const b = e.target.closest("[data-qdel]");
+  if (!b) return;
+  readQRows();
+  qRows.splice(Number(b.dataset.qdel), 1);
+  renderQRows();
+});
+
+$("q_save").onclick = async () => {
+  readQRows();
+  if (!qRows.length) { alert("저장할 품목이 없습니다."); return; }
+  for (const r of qRows) {
+    const a = Number(r.amount);
+    if (!String(r.name).trim()) { alert(`품목명이 비어 있는 줄이 있습니다.\n(입력: ${r.raw})`); return; }
+    if (r.amount === "" || isNaN(a) || a < 0) { alert(`'${r.name}'의 수량을 숫자로 입력해 주세요.`); return; }
+  }
+  const source = $("q_source").value;
+  const purchasedAt = $("q_purchasedAt").value || todayStr();
+  const batch = writeBatch(db);
+  qRows.forEach(r => {
+    const name = String(r.name).trim();
+    const amount = round1(Number(r.amount));
+    const expiry = r.expiry || estimateExpiry(r.category, r.storage, purchasedAt);
+    const isWeight = r.qtyType === "weight";
+    batch.set(doc(itemsCol), {
+      name, category: r.category, storage: r.storage, qtyType: r.qtyType,
+      amount, initialAmount: amount,
+      gramsPerServing: isWeight ? (GPS[r.category] || 100) : null,
+      servingEstimated: isWeight,
+      expiry, expiryEstimated: !r.expiry,
+      alertDays: calcAlertDays(r.category, purchasedAt, expiry),
+      source, purchasedAt,
+      memo: `입력: ${r.raw}` + (r.note ? ` / ${r.note}` : ""),
+      status: amount > 0 ? "보유" : "다씀",
+      createdAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: who()
+    });
+  });
+  $("quickDialog").close();
+  try { await batch.commit(); }
+  catch (err) { alert("저장 실패: " + err.code); }
 };
 </script>
 </body>
