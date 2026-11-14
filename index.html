@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#2f7d5b">
+<meta name="theme-color" content="#f4f2ee">
 <!-- 홈 화면 앱 설정 -->
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -13,58 +13,94 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>우리집 냉장고</title>
 <style>
-  :root{--bg:#f6f7f9;--card:#fff;--text:#222;--sub:#666;--line:#e3e5e8;--main:#2f7d5b;--red:#d93838;--yellow:#c48a00;}
+  :root{
+    --bg:#f4f2ee;--surface:#fff;--ink:#1f2421;--sub:#6b706c;--faint:#9a9d98;--line:#e4e1da;
+    --accent:#2e5e4e;--accent-soft:#e7eeea;--red:#b3412e;--amber:#a8741a;--amber-soft:#f6efe1;
+  }
   *{box-sizing:border-box}
-  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;background:var(--bg);color:var(--text);font-size:16px}
-  header{position:sticky;top:0;background:var(--main);color:#fff;padding:12px 16px;padding-top:calc(12px + env(safe-area-inset-top));display:flex;justify-content:space-between;align-items:center;z-index:5}
-  header h1{font-size:18px;margin:0}
-  header button{background:transparent;border:1px solid #fff;color:#fff;border-radius:6px;padding:4px 10px;font-size:13px}
-  nav.tabs{display:flex;background:#fff;border-bottom:1px solid var(--line)}
-  nav.tabs button{flex:1;padding:12px;border:none;background:none;font-size:15px;color:var(--sub);border-bottom:3px solid transparent}
-  nav.tabs button.on{color:var(--main);border-bottom-color:var(--main);font-weight:bold}
-  main{padding:12px 12px 100px;max-width:720px;margin:0 auto}
-  .chips{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
-  .chip{border:1px solid var(--line);background:#fff;border-radius:16px;padding:6px 12px;font-size:14px;color:var(--text)}
-  .chip.on{background:var(--main);color:#fff;border-color:var(--main)}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:8px}
-  .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
-  .name{font-weight:bold;font-size:17px}
-  .meta{color:var(--sub);font-size:13px;margin-top:4px}
-  .badge{display:inline-block;font-size:12px;padding:2px 6px;border-radius:4px;background:#eef0f2;color:#444;margin-left:4px}
-  .est{background:#fff4d6;color:#8a6200}
-  .exp-over{color:var(--red);font-weight:bold}
-  .exp-soon{color:var(--yellow);font-weight:bold}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;background:var(--bg);color:var(--ink);font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  button{font-family:inherit;cursor:pointer;color:inherit}
+  .num{font-variant-numeric:tabular-nums}
+
+  header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:14px 16px 10px;padding-top:calc(14px + env(safe-area-inset-top));display:flex;justify-content:space-between;align-items:baseline}
+  header h1{font-size:19px;font-weight:700;letter-spacing:-.3px;margin:0}
+  header button{background:none;border:none;color:var(--sub);font-size:14px;padding:4px 0}
+  nav.tabs{display:flex;gap:20px;padding:0 16px;background:var(--bg);border-bottom:1px solid var(--line)}
+  nav.tabs button{padding:10px 0;border:none;background:none;font-size:15px;color:var(--sub);border-bottom:2px solid transparent;margin-bottom:-1px}
+  nav.tabs button.on{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
+  main{padding:12px 16px 110px;max-width:640px;margin:0 auto}
+
+  .status{font-size:12px;color:var(--faint);margin:0 0 10px}
+  .btns.toolbar{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:0 0 10px}
+  .btns.toolbar button{padding:9px 4px;white-space:nowrap}
+  .chips{display:flex;gap:4px;flex-wrap:wrap}
+  .chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 11px;font-size:13px}
+  .chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .filters{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+  .seg button{border:none;background:none;padding:5px 12px;font-size:13px;color:var(--sub)}
+  .seg button.on{background:var(--ink);color:#fff}
+
+  .list{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .item{display:grid;grid-template-columns:1fr auto;align-items:center;border-top:1px solid var(--line)}
+  .item:first-child{border-top:none}
+  .item-main{display:flex;align-items:center;gap:8px;min-width:0;min-height:50px;padding:10px 4px 10px 14px;border:none;background:none;text-align:left;font-size:16px}
+  .item-name{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .item-tag{font-size:12px;color:var(--faint);flex:0 0 auto}
+  .item-qty{margin-left:auto;padding-left:8px;color:var(--sub);font-size:15px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .item-qty.over{color:var(--red);font-weight:600}
+  .item-qty.soon{color:var(--amber);font-weight:600}
+  .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+  .dot.over{background:var(--red)} .dot.soon{background:var(--amber)}
+  .item-act{display:flex;gap:4px;padding-right:10px}
+  .mini{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:5px 10px;font-size:13px}
+  .mini.fill{border-color:var(--accent);color:var(--accent);font-weight:600}
+  .item-detail{grid-column:1 / -1;padding:0 14px 12px 29px;font-size:14px;color:var(--sub)}
+  .item-detail dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:0}
+  .item-detail dt{color:var(--faint)} .item-detail dd{margin:0;color:var(--ink);font-variant-numeric:tabular-nums}
+  .item.used .item-name{color:var(--faint);text-decoration:line-through}
+  .exp-over{color:var(--red);font-weight:600} .exp-soon{color:var(--amber);font-weight:600}
+  .badge{display:inline-block;font-size:11px;padding:1px 5px;border-radius:3px;background:#eeece7;color:var(--sub);margin-left:4px;vertical-align:1px}
+  .est{background:var(--amber-soft);color:var(--amber)}
+  .bar{height:3px;background:#eeece7;border-radius:2px;margin:8px 0 2px;overflow:hidden}
+  .bar>div{height:100%;background:var(--accent)}
+  .empty{padding:28px 16px;text-align:center;color:var(--sub);font-size:14px}
+
+  h2.group{font-size:13px;font-weight:600;color:var(--sub);margin:22px 2px 6px;display:flex;align-items:center;gap:6px}
+  h2.group .dot{width:8px;height:8px}
+  h2.group .ok{background:var(--accent)}
+
   .btns{display:flex;gap:6px;margin-top:8px;align-items:center}
-  button{font-family:inherit;cursor:pointer}
-  .btns button,.primary,.secondary{padding:8px 12px;border-radius:6px;font-size:14px;border:1px solid var(--line);background:#fff;color:var(--text)}
-  .primary{background:var(--main)!important;color:#fff!important;border-color:var(--main)!important}
+  .btns button,.primary,.secondary{padding:8px 14px;border-radius:8px;font-size:14px;border:1px solid var(--line);background:var(--surface)}
+  .primary{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important}
   .danger{color:var(--red)!important}
-  .bar{height:6px;background:#eef0f2;border-radius:3px;margin-top:6px;overflow:hidden}
-  .bar>div{height:100%;background:var(--main)}
-  .fab{position:fixed;right:20px;bottom:calc(24px + env(safe-area-inset-bottom));width:56px;height:56px;border-radius:50%;background:var(--main);color:#fff;font-size:30px;border:none;box-shadow:0 2px 8px rgba(0,0,0,.25)}
-  h2.group{font-size:15px;margin:18px 4px 8px}
-  dialog{border:none;border-radius:12px;padding:16px;width:min(94vw,460px);max-height:90vh;overflow:auto}
-  dialog::backdrop{background:rgba(0,0,0,.4)}
-  dialog h3{margin:0 0 8px}
-  label{display:block;font-size:13px;color:var(--sub);margin:10px 0 4px}
-  input,select,textarea{width:100%;padding:9px;font-size:16px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--text);font-family:inherit}
+  .fab{position:fixed;right:18px;bottom:calc(22px + env(safe-area-inset-bottom));width:52px;height:52px;border-radius:14px;background:var(--ink);color:#fff;font-size:26px;line-height:1;border:none;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+
+  dialog{border:none;border-radius:14px;padding:18px;width:min(94vw,460px);max-height:90vh;overflow:auto;background:var(--surface);color:var(--ink)}
+  dialog::backdrop{background:rgba(20,22,20,.35)}
+  dialog h3{margin:0 0 10px;font-size:17px}
+  label{display:block;font-size:13px;color:var(--sub);margin:12px 0 4px}
+  input,select,textarea{width:100%;padding:9px 10px;font-size:16px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
   .inline{display:flex;gap:8px;align-items:flex-end}
   .inline>*{flex:1;min-width:0}
-  .hint{font-size:12px;color:#8a6200;margin-top:4px}
-  .center{text-align:center;padding:40px 16px}
+  .hint{font-size:12px;color:var(--amber);margin-top:6px;padding-left:8px;border-left:2px solid var(--amber)}
+  .hint:empty{display:none}
+  .meta{color:var(--sub);font-size:13px;margin-top:4px}
+  .center{text-align:center;padding:48px 16px}
   .hidden{display:none!important}
-  .status{font-size:12px;color:var(--sub);text-align:center;margin:0 0 8px}
-  .check{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--sub);margin-top:12px}
+  .check{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--sub);margin-top:14px}
   .check input{width:auto}
-  .qrow{border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px;background:#fafbfc}
+  .qrow{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px}
   .qrow .inline{margin-top:6px}
   .linkbtn{border:none!important;background:none!important;padding:4px!important}
+  details summary{cursor:pointer}
 </style>
 </head>
 <body>
 
 <header>
-  <h1>🧊 우리집 냉장고</h1>
+  <h1>우리집 냉장고</h1>
   <button id="logoutBtn" class="hidden">로그아웃</button>
 </header>
 
@@ -93,18 +129,24 @@
     <p class="status" id="syncStatus"></p>
 
     <div id="itemsTab">
-      <div class="btns" style="margin:0 0 10px;flex-wrap:wrap">
-        <button class="primary" id="quickBtn">⚡ 빠른 입력</button>
-        <button id="pasteBtn">📋 Claude 정리 붙여넣기</button>
-        <button id="addBtn2">+ 직접 추가</button>
+      <div class="btns toolbar">
+        <button class="primary" id="quickBtn">빠른 입력</button>
+        <button id="pasteBtn">Claude 정리</button>
+        <button id="addBtn2">직접 추가</button>
       </div>
-      <div class="chips" id="storageChips">
-        <button class="chip on" data-st="전체">전체</button>
-        <button class="chip" data-st="냉장">냉장</button>
-        <button class="chip" data-st="냉동">냉동</button>
-        <button class="chip" data-st="실온">실온</button>
+      <input id="searchBox" type="search" placeholder="품목 검색" style="margin-bottom:10px">
+      <div class="filters">
+        <div class="chips" id="storageChips">
+          <button class="chip on" data-st="전체">전체</button>
+          <button class="chip" data-st="냉장">냉장</button>
+          <button class="chip" data-st="냉동">냉동</button>
+          <button class="chip" data-st="실온">실온</button>
+        </div>
+        <div class="seg" id="viewSeg">
+          <button data-v="simple" class="on">간단히</button>
+          <button data-v="detail">자세히</button>
+        </div>
       </div>
-      <input id="searchBox" placeholder="품목 검색" style="margin-bottom:10px">
       <div id="itemList"></div>
       <label class="check"><input type="checkbox" id="showUsed"> 다 쓴 품목 보기</label>
     </div>
@@ -188,7 +230,7 @@
 
 <!-- 빠른 입력 창 -->
 <dialog id="quickDialog">
-  <h3 id="q_title">⚡ 빠른 입력</h3>
+  <h3 id="q_title">빠른 입력</h3>
   <div id="q_step1">
     <p class="meta">쉼표(,)나 줄바꿈으로 구분해서 대충 적어 주세요.<br>
       예: 대파 한 단, 두부 2모, 계란 한 판, 돼지고기 앞다리 600g</p>
@@ -333,6 +375,9 @@ let usingId = null;
 let expEst = false;
 let gpsEst = false;
 let qRows = [];
+let viewMode = "simple";          // simple = 간단히, detail = 자세히
+const openIds = new Set();        // 간단히 보기에서 펼친 품목
+try { if (localStorage.getItem("viewMode") === "detail") viewMode = "detail"; } catch (e) {}
 let qMode = "quick"; // quick = 빠른 입력, paste = Claude 정리 붙여넣기
 
 function show(view) {
@@ -364,8 +409,8 @@ onAuthStateChanged(auth, user => {
   unsub = onSnapshot(itemsCol, { includeMetadataChanges: true }, snap => {
     items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     $("syncStatus").textContent = snap.metadata.hasPendingWrites
-      ? "⏳ 저장 중…"
-      : (snap.metadata.fromCache ? "📴 서버 연결 대기 중 (연결되면 자동 저장)" : "✅ 모든 변경 저장됨");
+      ? "저장 중…"
+      : (snap.metadata.fromCache ? "오프라인 — 연결되면 자동으로 저장됩니다" : "모든 변경 저장됨");
     show("appView");
     render();
   }, err => {
@@ -387,40 +432,74 @@ function sortItems(arr) {
     String(a.name).localeCompare(String(b.name), "ko"));
 }
 
+function expState(it) {
+  if (!it.expiry) return "";
+  const d = daysLeft(it.expiry);
+  return d < 0 ? "over" : (d <= (it.alertDays ?? 7) ? "soon" : "");
+}
+function ddayText(it) {
+  if (!it.expiry) return "기한 없음";
+  const d = daysLeft(it.expiry);
+  return d < 0 ? `${-d}일 지남` : (d === 0 ? "오늘까지" : `D-${d}`);
+}
 function expiryHtml(it) {
   if (!it.expiry) return '<span class="meta">유통기한 없음</span>';
-  const d = daysLeft(it.expiry);
-  const cls = d < 0 ? "exp-over" : (d <= (it.alertDays ?? 7) ? "exp-soon" : "");
-  const txt = d < 0 ? `${-d}일 지남` : (d === 0 ? "오늘까지" : `D-${d}`);
-  return `<span class="${cls}">${esc(it.expiry)} (${txt})</span>${it.expiryEstimated ? '<span class="badge est">추정</span>' : ""}`;
+  const cls = expState(it) ? "exp-" + expState(it) : "";
+  return `<span class="${cls}">${esc(it.expiry)} (${ddayText(it)})</span>${it.expiryEstimated ? '<span class="badge est">추정</span>' : ""}`;
+}
+// 간단히 보기에 쓰는 짧은 수량: 무게형은 "약 N인분"
+function shortAmount(it) {
+  const a = round1(Number(it.amount) || 0);
+  if (it.qtyType === "count") return `${a}개`;
+  if (it.qtyType === "percent") return `${a}%`;
+  const gps = Number(it.gramsPerServing) || 0;
+  return gps ? `약 ${round1(a / gps)}인분` : `${a}g`;
+}
+function volumeText(it) {
+  const a = round1(Number(it.amount) || 0);
+  if (it.qtyType === "count") return `${a}개`;
+  if (it.qtyType === "percent") return `${a}% 남음`;
+  const gps = Number(it.gramsPerServing) || 0;
+  return `${a}g` + (gps ? ` · 1인분 ${gps}g${it.servingEstimated ? " (추정)" : ""}` : "");
 }
 
-function cardHtml(it) {
+// 한 줄 품목. right = "qty"(수량) 또는 "dday"(유통기한 남은 날)
+function rowHtml(it, right = "qty") {
+  const es = expState(it);
+  const open = viewMode === "detail" || openIds.has(it.id);
   const pct = it.initialAmount > 0 ? Math.max(0, Math.min(100, it.amount / it.initialAmount * 100)) : 0;
-  return `<div class="card">
-    <div class="row">
-      <div><span class="name">${esc(it.name)}</span><span class="badge">${esc(it.storage)}</span><span class="badge">${esc(it.category)}</span></div>
-      <div><b>${esc(amountText(it))}</b></div>
-    </div>
-    <div class="bar"><div style="width:${pct}%"></div></div>
-    <div class="meta">유통기한: ${expiryHtml(it)}</div>
-    ${it.memo ? `<div class="meta">메모: ${esc(it.memo)}</div>` : ""}
-    <div class="btns">
-      <button class="primary" data-act="use" data-id="${it.id}">사용</button>
-      <button data-act="edit" data-id="${it.id}">수정</button>
-    </div>
+  const rightTxt = right === "dday" ? ddayText(it) : shortAmount(it);
+  const tag = storageFilter === "전체" || right === "dday" ? `<span class="item-tag">${esc(it.storage)}</span>` : "";
+  return `<div class="item">
+    <button class="item-main" data-act="toggle" data-id="${it.id}" aria-expanded="${open}">
+      ${es ? `<span class="dot ${es}" title="${es === "over" ? "유통기한 지남" : "유통기한 임박"}"></span>` : ""}
+      <span class="item-name">${esc(it.name)}</span>${tag}
+      <span class="item-qty ${right === "dday" ? es : ""}">${esc(rightTxt)}</span>
+    </button>
+    <div class="item-act"><button class="mini fill" data-act="use" data-id="${it.id}">사용</button></div>
+    ${open ? `<div class="item-detail">
+      <dl>
+        <dt>유통기한</dt><dd>${expiryHtml(it)}</dd>
+        <dt>용량</dt><dd>${esc(volumeText(it))}</dd>
+        <dt>분류</dt><dd>${esc(it.category)} · ${esc(it.storage)}</dd>
+        ${it.memo ? `<dt>메모</dt><dd>${esc(it.memo)}</dd>` : ""}
+      </dl>
+      <div class="bar"><div style="width:${pct}%"></div></div>
+      <div class="btns"><button class="mini" data-act="edit" data-id="${it.id}">수정</button></div>
+    </div>` : ""}
   </div>`;
 }
 
-function usedCardHtml(it) {
-  return `<div class="card" style="opacity:.7">
-    <div class="row"><div><span class="name">${esc(it.name)}</span><span class="badge">다 씀</span></div></div>
-    <div class="btns">
-      <button data-act="edit" data-id="${it.id}">다시 채우기</button>
-      <button class="danger" data-act="purge" data-id="${it.id}">완전 삭제</button>
+function usedRowHtml(it) {
+  return `<div class="item used">
+    <div class="item-main" style="cursor:default"><span class="item-name">${esc(it.name)}</span></div>
+    <div class="item-act">
+      <button class="mini" data-act="edit" data-id="${it.id}">다시 채우기</button>
+      <button class="mini danger" data-act="purge" data-id="${it.id}">삭제</button>
     </div>
   </div>`;
 }
+const listHtml = (arr, fn) => `<div class="list">${arr.map(x => fn(x)).join("")}</div>`;
 
 function renderItems() {
   const q = $("searchBox").value.trim();
@@ -430,10 +509,10 @@ function renderItems() {
   const active = sortItems(list.filter(it => it.status !== "다씀"));
   const used = sortItems(list.filter(it => it.status === "다씀"));
   let html = active.length
-    ? active.map(cardHtml).join("")
-    : '<p class="center meta">등록된 식자재가 없습니다.<br>⚡ 빠른 입력이나 + 버튼으로 추가하세요.</p>';
+    ? listHtml(active, it => rowHtml(it))
+    : '<div class="list"><p class="empty">등록된 식자재가 없습니다.<br>빠른 입력이나 + 버튼으로 추가하세요.</p></div>';
   if ($("showUsed").checked) {
-    html += '<h2 class="group">다 쓴 품목</h2>' + (used.length ? used.map(usedCardHtml).join("") : '<p class="meta">없음</p>');
+    html += '<h2 class="group">다 쓴 품목</h2>' + (used.length ? listHtml(used, usedRowHtml) : '<p class="meta">없음</p>');
   }
   $("itemList").innerHTML = html;
 }
@@ -442,24 +521,17 @@ function renderExpiry() {
   const act = items.filter(it => it.status !== "다씀");
   const over = [], soon = [], ok = [], none = [];
   act.forEach(it => {
-    if (!it.expiry) return none.push(it);
-    const d = daysLeft(it.expiry);
-    if (d < 0) over.push(it);
-    else if (d <= (it.alertDays ?? 7)) soon.push(it);
+    const es = expState(it);
+    if (!it.expiry) none.push(it);
+    else if (es === "over") over.push(it);
+    else if (es === "soon") soon.push(it);
     else ok.push(it);
   });
-  const card = it => `<div class="card">
-      <div class="row"><div><span class="name">${esc(it.name)}</span><span class="badge">${esc(it.storage)}</span></div><div>${esc(amountText(it))}</div></div>
-      <div class="meta">${expiryHtml(it)} · 알림 기준 ${it.alertDays ?? 7}일 전</div>
-      <div class="btns">
-        <button class="primary" data-act="use" data-id="${it.id}">사용</button>
-        <button data-act="edit" data-id="${it.id}">수정</button>
-      </div></div>`;
-  const sec = (title, arr) => `<h2 class="group">${title} (${arr.length})</h2>` +
-    (arr.length ? sortItems(arr).map(card).join("") : '<p class="meta">없음</p>');
+  const sec = (title, dot, arr) => `<h2 class="group">${dot ? `<span class="dot ${dot}"></span>` : ""}${title} <span class="num">${arr.length}</span></h2>` +
+    (arr.length ? listHtml(sortItems(arr), it => rowHtml(it, "dday")) : '<p class="meta" style="margin:0 2px">없음</p>');
   $("expiryList").innerHTML =
-    sec("🔴 유통기한 지남", over) + sec("🟡 임박", soon) + sec("🟢 여유", ok) +
-    (none.length ? sec("유통기한 없음", none) : "");
+    sec("유통기한 지남", "over", over) + sec("임박", "soon", soon) + sec("여유", "ok", ok) +
+    (none.length ? sec("유통기한 없음", "", none) : "");
   const n = over.length + soon.length;
   $("expiryTabBtn").textContent = n ? `유통기한 관리 (${n})` : "유통기한 관리";
 }
@@ -476,6 +548,15 @@ document.querySelectorAll("#storageChips .chip").forEach(c => c.onclick = () => 
   renderItems();
 });
 $("searchBox").oninput = renderItems;
+function setView(v) {
+  viewMode = v;
+  openIds.clear();
+  document.querySelectorAll("#viewSeg button").forEach(x => x.classList.toggle("on", x.dataset.v === v));
+  try { localStorage.setItem("viewMode", v); } catch (e) {}
+  render();
+}
+document.querySelectorAll("#viewSeg button").forEach(b => b.onclick = () => setView(b.dataset.v));
+setView(viewMode);
 $("showUsed").onchange = renderItems;
 
 // 카드 버튼 클릭 처리
@@ -484,6 +565,12 @@ document.addEventListener("click", async e => {
   if (!b) return;
   const it = items.find(x => x.id === b.dataset.id);
   if (!it) return;
+  if (b.dataset.act === "toggle") {
+    if (viewMode === "detail") return;
+    openIds.has(it.id) ? openIds.delete(it.id) : openIds.add(it.id);
+    render();
+    return;
+  }
   if (b.dataset.act === "use") openUse(it);
   if (b.dataset.act === "edit") openItemDialog(it);
   if (b.dataset.act === "purge") {
@@ -872,7 +959,7 @@ function qRowHtml(r, i) {
   return `<div class="qrow" data-i="${i}">
     <div class="row">
       <span class="meta" style="margin:0">입력: ${esc(r.raw)}</span>
-      <button type="button" class="danger linkbtn" data-qdel="${i}">✕ 빼기</button>
+      <button type="button" class="danger linkbtn" data-qdel="${i}">빼기</button>
     </div>
     <input data-f="name" value="${esc(r.name)}" placeholder="품목명" style="margin-top:6px">
     <div class="inline">
@@ -886,8 +973,8 @@ function qRowHtml(r, i) {
     <label>유통기한 (비워 두면 추정값 자동 입력)</label>
     <input data-f="expiry" type="date" value="${esc(r.expiry)}">
     <input data-f="memo" value="${esc(r.memo || "")}" placeholder="메모 (선택)" style="margin-top:6px">
-    ${r.note ? `<div class="hint">⚠ ${esc(r.note)}</div>` : ""}
-    ${items.some(it => it.status !== "다씀" && it.name === String(r.name).trim()) ? '<div class="hint">ℹ 같은 이름의 보유 품목이 이미 있습니다. 저장하면 별도 품목으로 추가됩니다.</div>' : ""}
+    ${r.note ? `<div class="hint">${esc(r.note)}</div>` : ""}
+    ${items.some(it => it.status !== "다씀" && it.name === String(r.name).trim()) ? '<div class="hint">같은 이름의 보유 품목이 이미 있습니다. 저장하면 별도 품목으로 추가됩니다.</div>' : ""}
   </div>`;
 }
 function renderQRows() {
@@ -920,7 +1007,7 @@ function goConfirm(rows, source, purchasedAt, skipped) {
 
 $("quickBtn").onclick = () => {
   qMode = "quick";
-  $("q_title").textContent = "⚡ 빠른 입력";
+  $("q_title").textContent = "빠른 입력";
   $("q_text").value = "";
   $("q_source").value = "시장";
   showQStep("quick");
@@ -938,7 +1025,7 @@ $("q_parse").onclick = () => {
 // ===== Claude 정리 붙여넣기 화면 =====
 $("pasteBtn").onclick = () => {
   qMode = "paste";
-  $("q_title").textContent = "📋 Claude 정리 붙여넣기";
+  $("q_title").textContent = "Claude 정리 붙여넣기";
   $("p_prompt").value = buildPrompt($("p_store").value);
   $("p_text").value = "";
   showQStep("paste");
