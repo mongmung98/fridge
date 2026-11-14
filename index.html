@@ -93,8 +93,9 @@
     <p class="status" id="syncStatus"></p>
 
     <div id="itemsTab">
-      <div class="btns" style="margin:0 0 10px">
+      <div class="btns" style="margin:0 0 10px;flex-wrap:wrap">
         <button class="primary" id="quickBtn">⚡ 빠른 입력</button>
+        <button id="pasteBtn">📋 Claude 정리 붙여넣기</button>
         <button id="addBtn2">+ 직접 추가</button>
       </div>
       <div class="chips" id="storageChips">
@@ -187,7 +188,7 @@
 
 <!-- 빠른 입력 창 -->
 <dialog id="quickDialog">
-  <h3>⚡ 빠른 입력</h3>
+  <h3 id="q_title">⚡ 빠른 입력</h3>
   <div id="q_step1">
     <p class="meta">쉼표(,)나 줄바꿈으로 구분해서 대충 적어 주세요.<br>
       예: 대파 한 단, 두부 2모, 계란 한 판, 돼지고기 앞다리 600g</p>
@@ -197,6 +198,26 @@
       <button type="button" class="primary" id="q_parse">해석하기</button>
     </div>
   </div>
+  <div id="p_step1" class="hidden">
+    <p class="meta"><b>① Claude 채팅에 보낼 요청문 복사</b><br>
+      구매처를 고르고 [요청문 복사]를 누른 뒤, Claude 채팅에 붙여넣고 주문 내역 캡처 사진을 함께 보내세요.</p>
+    <div class="inline">
+      <select id="p_store"><option>네이버</option><option>컬리</option><option>이마트몰</option><option>시장</option><option>기타</option></select>
+      <button type="button" class="secondary" id="p_copy" style="flex:0 0 auto">요청문 복사</button>
+    </div>
+    <details style="margin-top:6px"><summary class="meta">요청문 내용 보기</summary>
+      <textarea id="p_prompt" rows="10" readonly style="font-size:13px"></textarea></details>
+    <p class="meta" style="margin-top:16px"><b>② Claude 답변 붙여넣기</b><br>
+      Claude가 정리해 준 결과를 그대로 복사해서 아래에 붙여넣으세요.</p>
+    <textarea id="p_text" rows="7" placeholder="[냉장고앱]&#10;구매처: 컬리&#10;구매일: 2026-11-14&#10;품목명 | 분류 | 보관 | 수량 | 단위 | 유통기한 | 메모&#10;대파 | 신선채소 | 냉장 | 1 | 단 |  | "></textarea>
+    <div class="btns" style="justify-content:space-between;margin-top:12px;flex-wrap:wrap">
+      <button type="button" id="p_clip">클립보드에서 붙여넣기</button>
+      <div style="display:flex;gap:6px">
+        <button type="button" id="p_cancel">취소</button>
+        <button type="button" class="primary" id="p_parse">확인 화면으로</button>
+      </div>
+    </div>
+  </div>
   <div id="q_step2" class="hidden">
     <p class="meta">해석 결과를 확인하고 틀린 부분을 고쳐 주세요.<br><b>[모두 저장]을 눌러야 저장됩니다.</b></p>
     <div class="inline">
@@ -204,6 +225,7 @@
         <select id="q_source"><option>시장</option><option>네이버</option><option>컬리</option><option>이마트몰</option><option>기타</option></select></div>
       <div><label>구매일</label><input id="q_purchasedAt" type="date"></div>
     </div>
+    <div id="q_skipped" class="hint"></div>
     <div id="q_rows" style="margin-top:12px"></div>
     <div class="btns" style="justify-content:space-between;margin-top:12px">
       <button type="button" id="q_back">← 다시 입력</button>
@@ -270,7 +292,7 @@ const UNIT_W = {
 };
 const NUM = { "하나":1, "한":1, "둘":2, "두":2, "셋":3, "세":3, "석":3, "넷":4, "네":4, "다섯":5, "여섯":6, "일곱":7, "여덟":8, "아홉":9, "열":10, "반":0.5 };
 const NUMWORDS = "하나|한|둘|두|셋|세|석|넷|네|다섯|여섯|일곱|여덟|아홉|열|반";
-const UNITS = "킬로그램|kg|킬로|그램|g|ml|리터|l|근|봉지|봉|개|알|구|모|팩|병|캔|통|마리|포기|송이|줄|장|단|묶음|망|박스|판";
+const UNITS = "킬로그램|kg|킬로|그램|g|ml|리터|l|근|봉지|봉|개|알|구|입|모|팩|병|캔|통|마리|포기|송이|줄|장|단|묶음|망|박스|판|%";
 
 // ===== 공통 도구 =====
 const $ = id => document.getElementById(id);
@@ -311,6 +333,7 @@ let usingId = null;
 let expEst = false;
 let gpsEst = false;
 let qRows = [];
+let qMode = "quick"; // quick = 빠른 입력, paste = Claude 정리 붙여넣기
 
 function show(view) {
   ["loadingView", "loginView", "deniedView", "appView"].forEach(v => $(v).classList.toggle("hidden", v !== view));
@@ -688,6 +711,12 @@ function parseLine(raw) {
   const storage = guessStorage(name);
 
   // 4) 단위 환산
+  const { qtyType, amount, notes } = convertQty(name, category, num, unit);
+  return { raw: raw.trim(), name, category, storage, qtyType, amount, expiry, memo: "", note: notes.join(" / ") };
+}
+
+// 수량+단위 → 앱 수량(g/개/%) 환산. 단·근·판 등은 추정값 + 안내 문구
+function convertQty(name, category, num, unit) {
   let qtyType = "count", amount = num ?? 1;
   const notes = [];
   if (num == null) notes.push("수량이 없어 1개로 넣었습니다");
@@ -699,6 +728,8 @@ function parseLine(raw) {
     const g = category === "신선채소" ? 375 : 600;
     qtyType = "weight"; amount = amount * g;
     notes.push(`1근 = ${g}g으로 계산했습니다 (추정)`);
+  } else if (unit === "%") {
+    qtyType = "percent";
   } else if (unit === "판") {
     amount = amount * 30;
     notes.push("1판 = 30개로 계산했습니다 (추정)");
@@ -711,12 +742,128 @@ function parseLine(raw) {
     } else {
       notes.push(`'${unit}' 단위를 개수로 넣었습니다`);
     }
+  } else if (unit && !new RegExp(`^(${UNITS})$`, "i").test(unit)) {
+    notes.push(`'${unit}' 단위를 몰라 개수로 넣었습니다`);
   }
-  return { raw: raw.trim(), name, category, storage, qtyType, amount: round1(amount), expiry, note: notes.join(" / ") };
+  return { qtyType, amount: round1(amount), notes };
 }
 
 function parseText(text) {
   return text.split(/[,\n，、]+|\s+그리고\s+/).map(s => s.trim()).filter(Boolean).map(parseLine);
+}
+
+// ===== Claude 정리 붙여넣기: 요청문과 해석 =====
+const STORE_TIPS = {
+  "네이버": "네이버 주문 내역은 상품명이 길고 옵션(무게·개수)이 따로 적힌 경우가 많아. 옵션의 무게·개수와 주문 수량을 곱해서 계산하고, 품목명은 '대파'처럼 짧게 줄여 줘.",
+  "컬리": "컬리 상품명은 앞에 [브랜드]가 붙고 뒤에 중량(예: 300g)이 붙는 경우가 많아. 브랜드는 메모 칸으로 옮기고, 중량×구매 개수로 총 무게를 계산해 줘.",
+  "이마트몰": "이마트몰 상품명에는 '1kg/봉', '10입' 같은 규격이 붙는 경우가 많아. 규격×구매 수량으로 계산하고, 'n입'은 개수로 봐 줘.",
+  "시장": "영수증이나 손글씨 메모 사진이면 적힌 그대로 정리해 줘.",
+  "기타": "영수증이나 주문 내역에 적힌 그대로 정리해 줘."
+};
+function buildPrompt(store) {
+  return `첨부한 캡처(주문 내역/영수증)에서 식자재만 골라 '우리집 냉장고' 앱 형식으로 정리해 줘.
+
+규칙
+1. 아래 [형식] 그대로, 다른 설명 없이 코드 블록 하나로만 답해 줘.
+2. 분류: 신선채소 / 육류·생선 / 유제품·계란 / 두부·가공식품 / 양념·소스 / 기타 중 하나
+3. 보관: 냉장 / 냉동 / 실온 중 하나
+4. 수량·단위: 무게를 알면 총 무게를 g으로 (예: 500g×2팩 → 수량 1000, 단위 g). 무게를 모르면 개수(개). '단·포기·판·근'으로 팔린 것은 그대로 (예: 수량 1, 단위 단).
+5. 유통기한: 캡처에 날짜가 보일 때만 YYYY-MM-DD로 적고, 없으면 비워 둬. 짐작해서 쓰지 마.
+6. 구매일: 주문일(결제일)이 보이면 YYYY-MM-DD, 안 보이면 비워 둬.
+7. 세제·휴지 같은 식자재가 아닌 것은 빼 줘.
+8. 확실하지 않은 칸은 메모에 '확인 필요'라고 적어 줘.
+9. 품목은 제목 줄 아래에 한 줄씩, 칸은 | 로 나눠 줘. 예: 두부 | 두부·가공식품 | 냉장 | 2 | 개 | 2026-11-25 |
+10. 참고: ${STORE_TIPS[store] || STORE_TIPS["기타"]}
+
+[형식]
+[냉장고앱]
+구매처: ${store}
+구매일: YYYY-MM-DD
+품목명 | 분류 | 보관 | 수량 | 단위 | 유통기한 | 메모
+`;
+}
+
+const SKIP_WORDS = ["없음", "모름", "미상", "-", "–", "x", "X", "?"];
+function normDate(s) {
+  s = String(s || "").trim();
+  if (!s || SKIP_WORDS.includes(s)) return { date: "", bad: false };
+  const m = s.match(/(\d{4}|\d{2})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/);
+  if (m) {
+    const y = m[1].length === 2 ? 2000 + Number(m[1]) : Number(m[1]);
+    const mo = Number(m[2]), d = Number(m[3]);
+    const dt = new Date(y, mo - 1, d);
+    if (dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d) return { date: fmtD(dt), bad: false };
+  }
+  return { date: "", bad: true };
+}
+function normSource(s) {
+  s = String(s || "").toLowerCase();
+  if (/네이버|스마트스토어|naver/.test(s)) return "네이버";
+  if (/컬리|kurly/.test(s)) return "컬리";
+  if (/이마트|ssg|쓱/.test(s)) return "이마트몰";
+  if (/시장/.test(s)) return "시장";
+  return "기타";
+}
+const onlyHangul = s => String(s || "").replace(/[^가-힣]/g, "");
+function normCategory(s) {
+  const h = onlyHangul(s);
+  if (!h) return null;
+  return CATS.find(c => onlyHangul(c) === h) || (h.length >= 2 && CATS.find(c => onlyHangul(c).includes(h))) || null;
+}
+function normStorage(s) {
+  s = String(s || "");
+  return ["냉동", "실온", "냉장"].find(w => s.includes(w)) || null;
+}
+
+// 표 한 줄(| 로 구분) → 확인 화면용 행
+function parseTableRow(cells, rawLine) {
+  const [name0 = "", catCell = "", stCell = "", qtyCell = "", unitCell = "", expCell = "", ...memoCells] = cells;
+  const name = name0.trim();
+  const notes = [];
+  let category = normCategory(catCell);
+  if (!category) { category = guessCategory(name); notes.push("분류를 추측했습니다"); }
+  let storage = normStorage(stCell);
+  if (!storage) { storage = guessStorage(name); notes.push("보관 장소를 추측했습니다"); }
+  const qm = String(qtyCell).replace(/,/g, "").match(/(\d+(?:\.\d+)?)\s*([^\d\s]*)/);
+  let num = qm ? Number(qm[1]) : null;
+  let unit = (String(unitCell).trim() || (qm ? qm[2] : "")).toLowerCase();
+  // "팩(300g)"처럼 단위 안에 무게가 있으면 무게로 계산
+  const wm = unit.match(/(\d+(?:\.\d+)?)\s*(kg|g|ml|l)\b/);
+  if (wm && !/^(kg|g|ml|l)$/.test(unit)) { num = (num ?? 1) * Number(wm[1]); unit = wm[2]; }
+  const q = convertQty(name, category, num, unit);
+  notes.push(...q.notes);
+  const ex = normDate(expCell);
+  if (ex.bad) notes.push(`유통기한 '${String(expCell).trim()}'을(를) 읽지 못해 비웠습니다`);
+  return {
+    raw: rawLine, name, category, storage, qtyType: q.qtyType, amount: q.amount,
+    expiry: ex.date, memo: memoCells.join(" ").trim(), note: notes.join(" / ")
+  };
+}
+
+// Claude 답변 전체 → { source, purchasedAt, rows, skipped }
+function parsePasted(text) {
+  let source = "", purchasedAt = "";
+  const rows = [], others = [];
+  for (const line0 of String(text).split(/\r?\n/)) {
+    let line = line0.trim().replace(/^(?:[-*•]\s+|\d+[.)]\s+)/, "");
+    if (!line || /^```/.test(line) || /^\[?\s*냉장고앱\s*\]?$/.test(line)) continue;
+    const sm = line.match(/^\**\s*구매처\s*\**\s*[:：]\s*(.*)$/);
+    if (sm) { if (sm[1].trim()) source = normSource(sm[1]); continue; }
+    const pm = line.match(/^\**\s*구매일\s*\**\s*[:：]\s*(.*)$/);
+    if (pm) { purchasedAt = normDate(pm[1]).date; continue; }
+    if (line.includes("|")) {
+      const cells = line.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+      if (cells.every(c => /^:?-{2,}:?$/.test(c) || c === "")) continue; // 표 구분선
+      if (cells[0].includes("품목")) continue;                         // 제목 줄
+      if (!cells[0] || /^(\(|예[:)])/.test(cells[0])) continue;      // 빈 줄·안내 줄
+      rows.push(parseTableRow(cells, line));
+    } else {
+      others.push(line);
+    }
+  }
+  // 표 형식이 하나도 없으면 빠른 입력처럼 자유 문장으로 해석
+  if (!rows.length && others.length) return { source, purchasedAt, rows: parseText(others.join("\n")), skipped: [] };
+  return { source, purchasedAt, rows, skipped: others };
 }
 
 // ===== 빠른 입력: 확인 화면 =====
@@ -738,7 +885,9 @@ function qRowHtml(r, i) {
     </div>
     <label>유통기한 (비워 두면 추정값 자동 입력)</label>
     <input data-f="expiry" type="date" value="${esc(r.expiry)}">
+    <input data-f="memo" value="${esc(r.memo || "")}" placeholder="메모 (선택)" style="margin-top:6px">
     ${r.note ? `<div class="hint">⚠ ${esc(r.note)}</div>` : ""}
+    ${items.some(it => it.status !== "다씀" && it.name === String(r.name).trim()) ? '<div class="hint">ℹ 같은 이름의 보유 품목이 이미 있습니다. 저장하면 별도 품목으로 추가됩니다.</div>' : ""}
   </div>`;
 }
 function renderQRows() {
@@ -753,26 +902,76 @@ function readQRows() {
   });
 }
 
+function showQStep(step) {
+  $("q_step1").classList.toggle("hidden", step !== "quick");
+  $("p_step1").classList.toggle("hidden", step !== "paste");
+  $("q_step2").classList.toggle("hidden", step !== "confirm");
+}
+function goConfirm(rows, source, purchasedAt, skipped) {
+  qRows = rows;
+  if (source) $("q_source").value = source;
+  $("q_purchasedAt").value = purchasedAt || todayStr();
+  $("q_skipped").textContent = skipped && skipped.length
+    ? `표 형식이 아니라서 건너뛴 줄 ${skipped.length}개: ${skipped.slice(0, 3).join(" / ")}${skipped.length > 3 ? " …" : ""}`
+    : "";
+  renderQRows();
+  showQStep("confirm");
+}
+
 $("quickBtn").onclick = () => {
+  qMode = "quick";
+  $("q_title").textContent = "⚡ 빠른 입력";
   $("q_text").value = "";
-  $("q_step1").classList.remove("hidden");
-  $("q_step2").classList.add("hidden");
+  $("q_source").value = "시장";
+  showQStep("quick");
   $("quickDialog").showModal();
 };
 $("q_cancel1").onclick = () => $("quickDialog").close();
 $("q_cancel2").onclick = () => $("quickDialog").close();
-$("q_back").onclick = () => {
-  $("q_step2").classList.add("hidden");
-  $("q_step1").classList.remove("hidden");
-};
+$("q_back").onclick = () => showQStep(qMode);
 $("q_parse").onclick = () => {
   const text = $("q_text").value.trim();
   if (!text) { alert("내용을 입력해 주세요."); return; }
-  qRows = parseText(text);
-  $("q_purchasedAt").value = todayStr();
-  renderQRows();
-  $("q_step1").classList.add("hidden");
-  $("q_step2").classList.remove("hidden");
+  goConfirm(parseText(text), "", "", []);
+};
+
+// ===== Claude 정리 붙여넣기 화면 =====
+$("pasteBtn").onclick = () => {
+  qMode = "paste";
+  $("q_title").textContent = "📋 Claude 정리 붙여넣기";
+  $("p_prompt").value = buildPrompt($("p_store").value);
+  $("p_text").value = "";
+  showQStep("paste");
+  $("quickDialog").showModal();
+};
+$("p_store").onchange = () => { $("p_prompt").value = buildPrompt($("p_store").value); };
+$("p_cancel").onclick = () => $("quickDialog").close();
+$("p_copy").onclick = async () => {
+  const text = buildPrompt($("p_store").value);
+  $("p_prompt").value = text;
+  try {
+    await navigator.clipboard.writeText(text);
+    alert("요청문을 복사했습니다.\nClaude 채팅에 붙여넣고 주문 내역 캡처를 함께 보내세요.");
+  } catch (e) {
+    $("p_prompt").closest("details").open = true;
+    $("p_prompt").select();
+    alert("자동 복사가 안 됩니다. 펼쳐진 요청문을 길게 눌러 직접 복사해 주세요.");
+  }
+};
+$("p_clip").onclick = async () => {
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) $("p_text").value = t; else alert("클립보드가 비어 있습니다.");
+  } catch (e) {
+    alert("이 기기에서는 자동 붙여넣기가 안 됩니다. 입력칸을 길게 눌러 [붙여넣기]를 선택해 주세요.");
+  }
+};
+$("p_parse").onclick = () => {
+  const text = $("p_text").value.trim();
+  if (!text) { alert("Claude가 정리한 결과를 붙여넣어 주세요."); return; }
+  const r = parsePasted(text);
+  if (!r.rows.length) { alert("식자재를 찾지 못했습니다. 형식을 확인해 주세요."); return; }
+  goConfirm(r.rows, r.source || $("p_store").value, r.purchasedAt, r.skipped);
 };
 $("q_rows").addEventListener("click", e => {
   const b = e.target.closest("[data-qdel]");
@@ -806,7 +1005,7 @@ $("q_save").onclick = async () => {
       expiry, expiryEstimated: !r.expiry,
       alertDays: calcAlertDays(r.category, purchasedAt, expiry),
       source, purchasedAt,
-      memo: `입력: ${r.raw}` + (r.note ? ` / ${r.note}` : ""),
+      memo: [String(r.memo || "").trim(), qMode === "quick" ? `입력: ${r.raw}` : "Claude 정리 가져오기", r.note].filter(Boolean).join(" / "),
       status: amount > 0 ? "보유" : "다씀",
       createdAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: who()
     });
