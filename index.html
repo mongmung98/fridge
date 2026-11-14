@@ -906,9 +906,20 @@ const SEASONING_WORDS = [...CAT_HINTS.find(([c]) => c === "양념·소스")[1].f
   "쯔유", "참치액", "해선장", "알룰로스", "레몬즙", "페퍼론치노", "핫소스", "라조유", "고추기름", "크러시드페퍼",
   "파프리카가루", "표고가루", "발사믹식초", "바베큐소스", "바비큐소스"];
 const seaItemsOf = list => activeItems(list).filter(it => it.category === "양념·소스");
-// 보유 조미료(분류 양념·소스)와 이름이 같은지
-const ownedSeasoning = (name, seaItems) => seaItems.find(it => [it.baseName, it.name].filter(Boolean).some(x => normName(x) === normName(name))) || null;
-const isSeaIng = (name, seaItems) => isSeasoningName(name) || !!ownedSeasoning(name, seaItems);
+// 같은 조미료로 보는 이름 묶음 (첫 이름이 대표)
+const SEA_GROUPS = [["후추", "후춧가루", "통후추"], ["깨", "참깨", "통깨", "깨소금"], ["식용유", "카놀라유", "포도씨유", "해바라기유", "콩기름"],
+  ["맛술", "미림", "요리술"], ["마늘", "다진마늘", "간마늘"], ["간장", "양조간장", "진간장"], ["고춧가루", "고추가루"], ["케첩", "케찹"],
+  ["마요네즈", "마요"], ["물엿", "올리고당"], ["식초", "양조식초", "사과식초"], ["머스타드", "홀그레인머스타드", "머스터드"]];
+const seaKey = n => { const x = normName(String(n).replace(/\(.*?\)/g, "")); const g = SEA_GROUPS.find(g => g.includes(x)); return g ? g[0] : x; };
+// 보유 조미료(분류 양념·소스)에 있는지: 같은 이름·같은 묶음·'사과식초'처럼 끝이 같은 이름
+const ownedSeasoning = (name, seaItems) => {
+  const k = seaKey(name);
+  return seaItems.find(it => [it.baseName, it.name].filter(Boolean).some(x => {
+    const y = seaKey(x);
+    return y === k || (k.length >= 2 && y.endsWith(k));
+  })) || null;
+};
+const BASIC_SEAS = ["소금", "설탕", "물", "후추", "식용유"];   // 없다고 표시하지 않는 기본 양념
 function isSeasoningName(n) {
   const x = normName(n);
   return !!x && SEASONING_WORDS.some(w => x === w || (w.length >= 2 && x.endsWith(w)));
@@ -951,10 +962,10 @@ function analyzeRecipe(rec, list) {
   const have = [], missing = [], soon = [];
   let over = false;
   // 없는 조미료: 보유 조미료가 등록돼 있을 때만 표시 (메뉴 가능 여부에는 영향 없음)
-  const seaNames = [...(rec.seasonings || []).map(x => splitIngredient(x).name), ...(rec.ingredients || []).filter(g => isSeaIng(g.name, seaItems)).map(g => g.name)];
-  const seaMissing = seaItems.length ? seaNames.filter(n => !BASIC_INGS.includes(normName(n)) && !["소금", "설탕", "물", "후추"].includes(normName(n)) && !ownedSeasoning(n, seaItems)) : [];
+  const seaNames = [...(rec.seasonings || []).map(x => splitIngredient(x).name), ...(rec.ingredients || []).filter(g => isSeasoningName(g.name)).map(g => g.name)];
+  const seaMissing = seaItems.length ? seaNames.filter(n => !BASIC_INGS.includes(normName(n)) && !BASIC_SEAS.includes(seaKey(n)) && !ownedSeasoning(n, seaItems) && !findItem(seaKey(n), act)) : [];   // 생마늘처럼 식자재로 있으면 있음
   for (const ing of rec.ingredients || []) {
-    if (BASIC_INGS.includes(normName(ing.name)) || isSeaIng(ing.name, seaItems)) continue;   // 밥·쌀·물·조미료는 주재료 판단에서 뺌
+    if (BASIC_INGS.includes(normName(ing.name)) || isSeasoningName(ing.name)) continue;   // 밥·쌀·물·조미료 이름은 주재료 판단에서 뺌 (카레처럼 조미료 칸 품목이 주재료면 아래에서 짝지음)
     const it = findItem(ing.name, act);
     if (it) {
       have.push({ ing, item: it });
@@ -980,7 +991,7 @@ function buildMenuPrompt(list, people, req) {
 조건
 1. 인원: ${people}명
 2. 요청: ${String(req || "").trim() || "없음"}
-3. ${sea.length ? "양념은 아래 '보유 조미료'에 있는 것을 써 줘. 목록에 없는 양념이 꼭 필요하면 양념 칸에 '(없음)'을 붙여 줘. 밥(쌀)은 집에 있다고 봐도 돼." : "기본 양념(간장, 소금, 설탕, 고춧가루, 참기름, 식용유 등)과 밥(쌀)은 집에 있다고 봐도 돼."} 주재료는 아래 목록에 있는 것만 써 줘.
+3. ${sea.length ? "양념은 아래 '보유 조미료'에 있는 것을 써 줘. 목록에 없는 양념은 꼭 필요할 때만 써 줘(앱이 없는 것을 따로 표시해). 밥(쌀)은 집에 있다고 봐도 돼." : "기본 양념(간장, 소금, 설탕, 고춧가루, 참기름, 식용유 등)과 밥(쌀)은 집에 있다고 봐도 돼."} 주재료는 아래 목록에 있는 것만 써 줘.
 4. 구분 '전체': 지금 재료로 만들 수 있는 메뉴 5~8개.
 5. 구분 '임박': ★ 표시(유통기한 지남·임박) 재료를 꼭 쓰는 메뉴 3~5개. 유통기한이 지난 재료를 쓰면 요약에 '상태 확인'이라고 적어 줘. ★가 없으면 '임박'은 빼도 돼.
 6. 같은 메뉴가 두 구분에 다 들어가도 돼.
@@ -1021,12 +1032,13 @@ function parseMenus(text) {
     const { kind = "", name = "", ing = "", sea = "", serv = "", steps = "" } = v;
     if (!name) { skipped.push(line.slice(0, 30)); continue; }
     if (name.length > 40) { skipped.push(name.slice(0, 20) + "…: 이름이 너무 깁니다"); continue; }
-    const ingredients = splitList(ing).slice(0, 30).map(splitIngredient);
+    const noNone = x => String(x).replace(/\s*[(（]\s*없음\s*[)）]/g, "").trim();   // '(없음)' 표시는 저장하지 않음 — 앱이 직접 판단
+    const ingredients = splitList(ing).map(noNone).filter(Boolean).slice(0, 30).map(splitIngredient);
     if (!ingredients.length) { skipped.push(name + ": 주재료가 없습니다"); continue; }
     menus.push({
       kind: kind.includes("임박") ? "soon" : "all",
       name, ingredients,
-      seasonings: splitList(sea).slice(0, 30),
+      seasonings: splitList(sea).map(noNone).filter(Boolean).slice(0, 30),
       servings: Number(String(serv).match(/\d+/)?.[0]) || null,
       steps: steps.slice(0, 300)
     });
@@ -1133,7 +1145,7 @@ function updateFormUnits() {
   $("f_gpsWrap").classList.toggle("hidden", t !== "weight");
   if (t === "percent" && $("f_amount").value === "") $("f_amount").value = 100;
   $("f_amountWrap").classList.toggle("hidden", t === "stock");
-  if (t === "stock") $("f_amount").value = 1;
+  if (t === "stock") $("f_amount").value = 1;   // 저장 시에도 1로 고정
 }
 function fillDefaultGps() {
   if (gpsEst || $("f_gps").value === "") {
@@ -1155,6 +1167,7 @@ function openItemDialog(it) {
   $("f_category").value = it?.category || "신선채소";
   $("f_storage").value = it?.storage || "냉장";
   $("f_qtyType").value = it?.qtyType || "weight";
+  lastQtyType = $("f_qtyType").value;
   $("f_amount").value = it ? (it.status === "다씀" ? "" : it.amount) : "";
   $("f_gps").value = it?.gramsPerServing ?? "";
   gpsEst = it ? !!it.servingEstimated : true;
@@ -1174,7 +1187,12 @@ function openItemDialog(it) {
 $("addBtn").onclick = () => openItemDialog(null);
 $("addBtn2").onclick = () => openItemDialog(null);
 $("f_cancel").onclick = () => $("itemDialog").close();
-$("f_qtyType").onchange = () => { updateFormUnits(); if ($("f_qtyType").value === "weight") fillDefaultGps(); updateHints(); };
+let lastQtyType = "weight";
+$("f_qtyType").onchange = () => {
+  if (lastQtyType === "stock" && $("f_qtyType").value !== "stock") $("f_amount").value = "";   // 새로 산 용량을 직접 입력하게
+  lastQtyType = $("f_qtyType").value;
+  updateFormUnits(); if ($("f_qtyType").value === "weight") fillDefaultGps(); updateHints();
+};
 $("f_category").onchange = () => { fillDefaultGps(); updateHints(); };
 $("f_gps").oninput = () => { gpsEst = false; updateHints(); };
 $("f_expiry").oninput = () => { expEst = false; updateHints(); };
@@ -1320,6 +1338,8 @@ function guessStorage(name) {
 
 function parseLine(raw) {
   let text = raw.trim();
+  const stockOnly = /\s있음$/.test(text);              // "간장 있음" → 양 기록 안 함
+  if (stockOnly) text = text.replace(/\s있음$/, "");
 
   // 1) 유통기한 날짜(2026-11-20 형식)가 있으면 따로 떼어냄
   let expiry = "";
@@ -1351,7 +1371,7 @@ function parseLine(raw) {
   const storage = guessStorage(name);
 
   // 4) 단위 환산
-  const { qtyType, amount, notes } = convertQty(name, category, num, unit);
+  const { qtyType, amount, notes } = stockOnly ? convertQty(name, category, null, "있음") : convertQty(name, category, num, unit);
   return { raw: raw.trim(), name, category, storage, qtyType, amount, expiry, memo: "", note: notes.join(" / ") };
 }
 
@@ -1404,6 +1424,7 @@ const STORE_TIPS = {
 // 정리 규칙 (요청문과 프로젝트 지침이 같이 씀)
 const ITEM_RULES = `- 대표 이름: 요리할 때 부르는 일반 재료 이름 하나로 줄여 줘. 예: 두툼한 사각어묵 → 어묵, 국산 깐마늘 → 마늘, 한돈 앞다리살 구이용 → 돼지고기, 서울우유 1L → 우유.
   확실하지 않으면 후보를 / 로 나눠 적어 줘. 예: 어묵/유부
+  조미료의 대표 이름은 조미료 이름 그대로 적어 줘. 예: 새우젓 → 새우젓, 레몬즙 → 레몬즙 (새우·레몬으로 줄이지 않기)
 - 품목명: 상품 이름을 짧게 (브랜드는 메모 칸으로).
 - 분류: 신선채소 / 육류·생선 / 유제품·계란 / 두부·가공식품 / 양념·소스 / 기타 중 하나
 - 보관: 냉장 / 냉동 / 실온 중 하나
@@ -1590,7 +1611,7 @@ function qRowHtml(r, i) {
     </div>
     <div class="inline">
       <select data-f="qtyType">${opt([["weight","무게 (g)"],["count","개수 (개)"],["percent","비율 (%)"],["stock","있음만"]], r.qtyType)}</select>
-      <input data-f="amount" type="number" inputmode="decimal" min="0" step="any" value="${r.amount}">
+      <input data-f="amount" type="number" inputmode="decimal" min="0" step="any" value="${r.qtyType === "stock" ? "" : esc(r.amount)}" ${r.qtyType === "stock" ? 'disabled placeholder="양 기록 안 함"' : 'placeholder="수량"'}>
     </div>
     <label>유통기한 (비워 두면 추정값 자동 입력)</label>
     <input data-f="expiry" type="date" value="${esc(r.expiry)}">
@@ -1699,6 +1720,14 @@ $("q_rows").addEventListener("click", e => {   // 대표 이름 후보 버튼 �
   const b = e.target.closest("[data-pick]");
   if (b) b.closest(".qrow").querySelector('[data-f="baseName"]').value = b.dataset.pick;
 });
+$("q_rows").addEventListener("change", e => {   // 수량 방식을 바꾸면 그 줄을 다시 그림 ('있음만'에서 바꾸면 수량을 비워 다시 적게)
+  if (e.target.dataset.f !== "qtyType") return;
+  const r = qRows[Number(e.target.closest(".qrow").dataset.i)];
+  const prev = r.qtyType;
+  readQRows();
+  if (prev === "stock" && r.qtyType !== "stock") r.amount = "";
+  renderQRows();
+});
 $("q_rows").addEventListener("input", e => {
   if (e.target.dataset.f !== "name") return;
   e.target.closest(".qrow").querySelector("[data-dup]").textContent = dupText(e.target.value);
@@ -1716,7 +1745,7 @@ $("q_save").onclick = async () => {
   if (!qRows.length) { alert("저장할 품목이 없습니다."); return; }
   for (const r of qRows) {
     if (!String(r.name).trim()) { alert(`품목명이 비어 있는 줄이 있습니다.\n(입력: ${r.raw})`); return; }
-    const err = checkItem(r);
+    const err = checkItem(r.qtyType === "stock" ? { ...r, amount: 1 } : r);
     if (err) { alert(err); return; }
   }
   const source = $("q_source").value;
@@ -1754,12 +1783,11 @@ function menuRowHtml(key, rec, an, opts = {}) {
   const open = openMenu.has(key);
   const right = opts.right ?? (an.canMake ? "재료 있음" : `없는 재료 ${an.missing.length}`);
   // 주재료에 섞여 들어온 조미료는 양념 줄로 옮겨 보여 줌
-  const seaItems = seaItemsOf(items);
-  const seaIngs = (rec.ingredients || []).filter(g => isSeaIng(g.name, seaItems));
+  const seaIngs = (rec.ingredients || []).filter(g => isSeasoningName(g.name));
   const seasonings = [...(rec.seasonings || []), ...seaIngs.map(g => g.name + (g.qty ? " " + g.qty : ""))];
   const seaHtml = seasonings.map(x => an.seaMissing?.includes(splitIngredient(x).name)
     ? `<span class="ing-miss">${esc(x)} (없음)</span>` : esc(x)).join(", ");
-  const ingHtml = (rec.ingredients || []).filter(g => !isSeaIng(g.name, seaItems)).map(g => {
+  const ingHtml = (rec.ingredients || []).filter(g => !isSeasoningName(g.name)).map(g => {
     const ok = an.have.some(h => h.ing === g);
     return `<span class="${ok ? "ing-have" : "ing-miss"}">${esc(g.name)}${g.qty ? " " + esc(g.qty) : ""}${ok ? "" : " (없음)"}</span>`;
   }).join(", ");
