@@ -122,7 +122,7 @@
   .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
   .qrow{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px}
   .qrow .inline{margin-top:6px}
-  button.linkbtn{border:none;background:none;padding:4px}
+  button.linkbtn{border:none;background:none;padding:4px;white-space:nowrap;flex:0 0 auto}
   details summary{cursor:pointer}
 </style>
 </head>
@@ -255,6 +255,8 @@
       <select id="f_source"><option>네이버</option><option>컬리</option><option>이마트몰</option><option>시장</option><option>기타</option></select></div>
     <div><label>구매일</label><input id="f_purchasedAt" type="date"></div>
   </div>
+  <label>대표 이름 (메뉴 판단용, 비우면 품목명)</label>
+  <input id="f_base" placeholder="예: 두툼한 사각어묵 → 어묵">
   <label>메모</label>
   <input id="f_memo" placeholder="예: 3등분해서 냉동">
   <div class="btns" style="justify-content:space-between;margin-top:16px">
@@ -378,6 +380,12 @@
     </div>
   </div>
   <div id="p_step1" class="hidden">
+    <details style="margin-bottom:12px"><summary class="meta"><b>사진만 올려서 쓰기 (클로드 프로젝트, 처음 한 번 설정)</b></summary>
+      <p class="meta">클로드 앱에서 프로젝트를 하나 만들고(예: 우리집 냉장고), 프로젝트 지침에 아래 내용을 붙여넣어 두세요.
+        그다음부터는 그 프로젝트에서 사진만 올리면 클로드가 1차 정리 → 헷갈리는 것만 선택지로 질문 → 최종 표를 만들어 줍니다.
+        최종 표를 아래 ② 칸에 붙여넣으면 됩니다.</p>
+      <div class="btns"><button type="button" id="p_guideCopy">프로젝트 지침 복사</button></div>
+    </details>
     <p class="meta"><b>① Claude 채팅에 보낼 요청문 복사</b><br>
       구매처를 고르고 [요청문 복사]를 누른 뒤, Claude 채팅에 붙여넣고 주문 내역 캡처 사진을 함께 보내세요.</p>
     <div class="inline">
@@ -649,6 +657,7 @@ function rowHtml(it, right = "qty") {
         <dt>유통기한</dt><dd>${expiryHtml(it)}</dd>
         <dt>용량</dt><dd>${esc(volumeText(it))}</dd>
         <dt>알림</dt><dd>${esc(it.alertDays ?? 7)}일 전부터 임박</dd>
+        ${it.baseName && it.baseName !== it.name ? `<dt>대표 이름</dt><dd>${esc(it.baseName)}</dd>` : ""}
         <dt>분류</dt><dd>${esc(it.category)}, ${esc(it.storage)} 보관</dd>
         ${it.memo ? `<dt>메모</dt><dd>${esc(it.memo)}</dd>` : ""}
       </dl>
@@ -812,7 +821,8 @@ function parseBackup(text) {
     const alert = Number(it.alertDays);
     seen.add(id);
     out.push({ id, data: {
-      name: String(it.name).trim(), category: it.category, storage: it.storage, qtyType,
+      name: String(it.name).trim(), baseName: String(it.baseName ?? "").trim().slice(0, 20) || String(it.name).trim(),
+      category: it.category, storage: it.storage, qtyType,
       amount: round1(amount),
       initialAmount: init >= 0 && init <= cap ? round1(Math.max(init, amount)) : round1(amount),
       gramsPerServing: qtyType === "weight" && gps > 0 && gps <= 10000 ? gps : null,
@@ -866,10 +876,11 @@ function findItem(ingName, list) {
   for (const nm of names) {
     const n = normName(nm);
     if (!n) continue;
-    const exact = list.find(it => normName(it.name) === n);
+    const namesOf = it => [it.baseName, it.name].filter(Boolean);   // 대표 이름 먼저
+    const exact = list.find(it => namesOf(it).some(x => normName(x) === n));
     if (exact) return exact;
-    const part = list.find(it => it.category !== "양념·소스" &&
-      (words(it.name).some(w => w === n) || words(nm).some(w => w === normName(it.name))));
+    const part = list.find(it => it.category !== "양념·소스" && namesOf(it).some(x =>
+      words(x).some(w => w === n) || words(nm).some(w => w === normName(x))));
     if (part) return part;
   }
   return null;
@@ -897,7 +908,8 @@ function buildMenuPrompt(list, people, req) {
   const line = it => {
     const d = it.expiry ? daysLeft(it.expiry) : null;
     const exp = d == null ? "" : (d < 0 ? `, 유통기한 ${-d}일 지남` : d === 0 ? ", 유통기한 오늘까지" : `, 유통기한 ${d}일 남음`) + (it.expiryEstimated ? "(추정)" : "");
-    return `- ${isSoonItem(it) ? "★ " : ""}${it.name}: ${amountText(it)}, ${it.storage}${exp}`;
+    const nm = it.baseName && it.baseName !== it.name ? `${it.baseName} (${it.name})` : it.name;
+    return `- ${isSoonItem(it) ? "★ " : ""}${nm}: ${amountText(it)}, ${it.storage}${exp}`;
   };
   const main = act.filter(it => !isSea(it)), sea = act.filter(isSea);
   return `아래는 오늘(${todayStr()}) 우리집 냉장고 재료야. 이 재료로 만들 수 있는 메뉴를 추천해 줘.
@@ -909,7 +921,7 @@ function buildMenuPrompt(list, people, req) {
 4. 구분 '전체': 지금 재료로 만들 수 있는 메뉴 5~8개.
 5. 구분 '임박': ★ 표시(유통기한 지남·임박) 재료를 꼭 쓰는 메뉴 3~5개. 유통기한이 지난 재료를 쓰면 요약에 '상태 확인'이라고 적어 줘. ★가 없으면 '임박'은 빼도 돼.
 6. 같은 메뉴가 두 구분에 다 들어가도 돼.
-7. 주재료는 목록에 적힌 이름 그대로, 양과 함께 쉼표로 나눠 줘. 예: 두부 1모, 대파 1/2대
+7. 주재료는 목록의 이름(괄호가 있으면 괄호 앞 대표 이름) 그대로, 양과 함께 쉼표로 나눠 줘. 예: 두부 1모, 대파 1/2대
 8. 요약은 조리 순서를 한두 문장으로만.
 9. 아래 [형식] 그대로, 다른 설명 없이 코드 블록 하나로만 답해 줘.
 
@@ -1006,6 +1018,7 @@ function openItemDialog(it) {
   $("f_source").value = it?.source || "시장";
   $("f_purchasedAt").value = it?.purchasedAt || todayStr();
   $("f_memo").value = it?.memo || "";
+  $("f_base").value = it?.baseName && it.baseName !== it.name ? it.baseName : "";
   $("f_done").classList.toggle("hidden", !it || it.status === "다씀");
   updateFormUnits();
   if (!it) fillDefaultGps();
@@ -1046,7 +1059,7 @@ $("f_save").onclick = async () => {
     servingEstimated = gpsEst || !(g > 0);
   }
   const data = {
-    name, category, storage, qtyType,
+    name, baseName: $("f_base").value.trim().slice(0, 20) || name, category, storage, qtyType,
     amount: round1(amount),
     gramsPerServing, servingEstimated,
     expiry, expiryEstimated,
@@ -1238,30 +1251,64 @@ const STORE_TIPS = {
   "시장": "영수증이나 손글씨 메모 사진이면 적힌 그대로 정리해 줘.",
   "기타": "영수증이나 주문 내역에 적힌 그대로 정리해 줘."
 };
+// 정리 규칙 (요청문과 프로젝트 지침이 같이 씀)
+const ITEM_RULES = `- 대표 이름: 요리할 때 부르는 일반 재료 이름 하나로 줄여 줘. 예: 두툼한 사각어묵 → 어묵, 국산 깐마늘 → 마늘, 한돈 앞다리살 구이용 → 돼지고기, 서울우유 1L → 우유.
+  확실하지 않으면 후보를 / 로 나눠 적어 줘. 예: 어묵/유부
+- 품목명: 상품 이름을 짧게 (브랜드는 메모 칸으로).
+- 분류: 신선채소 / 육류·생선 / 유제품·계란 / 두부·가공식품 / 양념·소스 / 기타 중 하나
+- 보관: 냉장 / 냉동 / 실온 중 하나
+- 수량·단위: 무게를 알면 총 무게를 g으로 (예: 500g×2팩 → 수량 1000, 단위 g). 무게를 모르면 개수(개). '단·포기·판·근'으로 팔린 것은 그대로 (예: 수량 1, 단위 단).
+- 유통기한: 사진에 날짜가 보일 때만 YYYY-MM-DD로 적고, 없으면 비워 둬. 짐작해서 쓰지 마.
+- 구매일: 주문일(결제일)이 보이면 YYYY-MM-DD, 안 보이면 비워 둬.
+- 세제·휴지 같은 식자재가 아닌 것은 빼 줘.
+- 품목은 제목 줄 아래에 한 줄씩, 칸은 | 로 나눠 줘.`;
+const ITEM_HEADER = "품목명 | 대표 이름 | 분류 | 보관 | 수량 | 단위 | 유통기한 | 메모";
+
 function buildPrompt(store) {
-  return `첨부한 캡처(주문 내역/영수증)에서 식자재만 골라 '우리집 냉장고' 앱 형식으로 정리해 줘.
+  return `첨부한 사진(주문 내역/영수증/식자재)에서 식자재만 골라 '우리집 냉장고' 앱 형식으로 정리해 줘.
 
 규칙
-1. 아래 [형식] 그대로, 다른 설명 없이 코드 블록 하나로만 답해 줘.
-2. 분류: 신선채소 / 육류·생선 / 유제품·계란 / 두부·가공식품 / 양념·소스 / 기타 중 하나
-3. 보관: 냉장 / 냉동 / 실온 중 하나
-4. 수량·단위: 무게를 알면 총 무게를 g으로 (예: 500g×2팩 → 수량 1000, 단위 g). 무게를 모르면 개수(개). '단·포기·판·근'으로 팔린 것은 그대로 (예: 수량 1, 단위 단).
-5. 유통기한: 캡처에 날짜가 보일 때만 YYYY-MM-DD로 적고, 없으면 비워 둬. 짐작해서 쓰지 마.
-6. 구매일: 주문일(결제일)이 보이면 YYYY-MM-DD, 안 보이면 비워 둬.
-7. 세제·휴지 같은 식자재가 아닌 것은 빼 줘.
-8. 확실하지 않은 칸은 메모에 '확인 필요'라고 적어 줘.
-9. 품목은 제목 줄 아래에 한 줄씩, 칸은 | 로 나눠 줘. 예: 두부 | 두부·가공식품 | 냉장 | 2 | 개 | 2026-11-25 |
-10. 참고: ${STORE_TIPS[store] || STORE_TIPS["기타"]}
+- 아래 [형식] 그대로, 다른 설명 없이 코드 블록 하나로만 답해 줘.
+- 확실하지 않은 칸은 메모에 '확인 필요'라고 적어 줘.
+${ITEM_RULES}
+- 참고: ${STORE_TIPS[store] || STORE_TIPS["기타"]}
 
 [형식]
 [냉장고앱]
 구매처: ${store}
 구매일: YYYY-MM-DD
-품목명 | 분류 | 보관 | 수량 | 단위 | 유통기한 | 메모
+${ITEM_HEADER}
 `;
 }
 
-const SKIP_WORDS = ["없음", "모름", "미상", "-", "–", "x", "X", "?"];
+// 클로드 프로젝트 지침: 한 번 넣어 두면 이후 사진만 올리면 됨
+function buildProjectGuide() {
+  return `너는 '우리집 냉장고' 앱에 식자재를 넣도록 도와주는 정리 담당이야.
+내가 장보기 캡처, 영수증, 식자재 사진을 올리면 아래 순서대로 해 줘.
+
+1단계 1차 정리: 사진에서 식자재만 골라 [형식] 표로 정리해.
+2단계 확인 질문: 확실하지 않은 칸(대표 이름, 분류, 보관, 수량, 구매처)이 있으면 표 아래에 번호를 붙여 묻고 선택지를 줘.
+  예) 1. '두툼한 사각어묵'의 대표 이름: ① 어묵 ② 유부 ③ 직접 입력
+      2. '닭가슴살'의 보관: ① 냉장 ② 냉동
+  내가 '1-①, 2-②'처럼 답하면 반영해. 확실하지 않은 것이 없으면 이 단계는 건너뛰어.
+3단계 최종: 모두 정해지면 최종 표를 코드 블록 하나로만 보여 주고, 그 아래에 한 줄로
+  "이 내용을 복사해서 앱의 [Claude 정리] → ② 칸에 붙여넣으세요"라고 안내해 줘.
+  내가 끝까지 답하지 못한 칸은 후보를 / 로 남겨 둬 (앱에서 고를 수 있어).
+
+정리 규칙
+${ITEM_RULES}
+- 구매처: 네이버 / 컬리 / 이마트몰 / 시장 / 기타 중 하나. 사진으로 알 수 없으면 2단계에서 물어봐.
+- 구매처별 참고: 네이버는 ${STORE_TIPS["네이버"]} 컬리는 ${STORE_TIPS["컬리"]} 이마트몰은 ${STORE_TIPS["이마트몰"]}
+
+[형식]
+[냉장고앱]
+구매처: (네이버/컬리/이마트몰/시장/기타)
+구매일: YYYY-MM-DD
+${ITEM_HEADER}
+`;
+}
+
+const SKIP_WORDS = ["없음", "모름", "미상", "-", "–", "x", "X", "?", "YYYY-MM-DD"];
 function normDate(s) {
   s = String(s || "").trim();
   if (!s || SKIP_WORDS.includes(s)) return { date: "", bad: false };
@@ -1293,13 +1340,16 @@ function normStorage(s) {
   return ["냉동", "실온", "냉장"].find(w => s.includes(w)) || null;
 }
 
-// 표 한 줄(| 로 구분) → 확인 화면용 행
-function parseTableRow(cells, rawLine) {
-  const [name0 = "", catCell = "", stCell = "", qtyCell = "", unitCell = "", expCell = "", ...memoCells] = cells;
+// 표 한 줄(칸 이름 → 값) → 확인 화면용 행
+function parseTableRow(v, rawLine) {
+  const { name: name0 = "", base: baseCell = "", cat: catCell = "", st: stCell = "", qty: qtyCell = "", unit: unitCell = "", exp: expCell = "", memo: memoCell = "" } = v;
   const name = name0.trim();
   const notes = [];
+  // 대표 이름: '어묵/유부'처럼 후보가 있으면 확인 화면에서 고르게 함
+  const baseOptions = [...new Set(String(baseCell).split(/[/／]/).map(x => x.replace(/[?？]/g, "").trim()).filter(Boolean))].slice(0, 5);
+  if (baseOptions.length > 1) notes.push(`대표 이름을 골라 주세요: ${baseOptions.join(" / ")}`);
   let category = normCategory(catCell);
-  if (!category) { category = guessCategory(name); notes.push("분류를 추측했습니다"); }
+  if (!category) { category = guessCategory(baseOptions[0] || name); notes.push("분류를 추측했습니다"); }
   let storage = normStorage(stCell);
   if (!storage) { storage = guessStorage(name); notes.push("보관 장소를 추측했습니다"); }
   const qm = String(qtyCell).replace(/,/g, "").match(/(\d+(?:\.\d+)?)\s*([^\d\s]*)/);
@@ -1308,21 +1358,24 @@ function parseTableRow(cells, rawLine) {
   // "팩(300g)"처럼 단위 안에 무게가 있으면 무게로 계산
   const wm = unit.match(/(\d+(?:\.\d+)?)\s*(kg|g|ml|l)\b/);
   if (wm && !/^(kg|g|ml|l)$/.test(unit)) { num = (num ?? 1) * Number(wm[1]); unit = wm[2]; }
-  const q = convertQty(name, category, num, unit);
+  const q = convertQty(baseOptions[0] || name, category, num, unit);
   notes.push(...q.notes);
   const ex = normDate(expCell);
   if (ex.bad) notes.push(`유통기한 '${String(expCell).trim()}'을(를) 읽지 못해 비웠습니다`);
   const expiryEst = !!ex.date && /추정|예상|약/.test(expCell);
   if (expiryEst) notes.push("Claude가 짐작한 유통기한이라 '추정'으로 저장합니다");
   return {
-    raw: rawLine, name, category, storage, qtyType: q.qtyType, amount: q.amount,
-    expiry: ex.date, expiryEst, memo: memoCells.join(" ").trim(), note: notes.join(" / ")
+    raw: rawLine, name, baseName: baseOptions[0] || "", baseOptions, category, storage, qtyType: q.qtyType, amount: q.amount,
+    expiry: ex.date, expiryEst, memo: String(memoCell).trim(), note: notes.join(" / ")
   };
 }
 
 // Claude 답변 전체 → { source, purchasedAt, rows, skipped }
+const ITEM_KEYS = { 품목명: "name", 품목: "name", 품목이름: "name", 상품명: "name", 이름: "name", 대표이름: "base", 대표명: "base",
+  분류: "cat", 보관: "st", 보관장소: "st", 수량: "qty", 단위: "unit", 유통기한: "exp", 메모: "memo" };
 function parsePasted(text) {
   let source = "", purchasedAt = "";
+  let cols = ["name", "cat", "st", "qty", "unit", "exp", "memo"];   // 제목 줄이 없을 때: 예전 형식 순서
   const rows = [], others = [];
   for (const line0 of String(text).split(/\r?\n/)) {
     let line = line0.trim().replace(/^(?:[-*•]\s+|\d+[.)]\s+)/, "");
@@ -1331,13 +1384,18 @@ function parsePasted(text) {
     if (sm) { if (sm[1].trim()) source = normSource(sm[1]); continue; }
     const pm = line.match(/^\**\s*구매일\s*\**\s*[:：]\s*(.*)$/);
     if (pm) { purchasedAt = normDate(pm[1]).date; continue; }
-    if (line.includes("|")) {
-      const cells = line.replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.replace(/\*\*/g, "").trim());
+    if (line.includes("|") || line.includes("｜")) {
+      const cells = line.replace(/｜/g, "|").replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.replace(/\*\*/g, "").trim());
       if (cells.every(c => /^:?-{2,}:?$/.test(c) || c === "")) continue; // 표 구분선
-      if (/^(품목\s*명?|품목\s*이름|상품\s*명|이름)$/.test(cells[0])) continue;   // 제목 줄
+      // 제목 줄: 칸 이름으로 순서를 읽음 (예전 형식·대표 이름 있는 형식 모두)
+      const keys = cells.map(c => ITEM_KEYS[c.replace(/\s/g, "")]);
+      if (keys[0] === "name" && keys.filter(Boolean).length >= 2) { cols = keys; continue; }
       if (/^(소계|합계|총계|총)$/.test(cells[0])) continue;                       // 합계 줄
       if (!cells[0] || /^(\(|예[:)])/.test(cells[0])) continue;      // 빈 줄·안내 줄
-      rows.push(parseTableRow(cells, line));
+      const v = {};
+      cols.forEach((k, i) => { if (k && v[k] == null) v[k] = cells[i] ?? ""; });
+      if (cols.includes("memo") && cells.length > cols.length) v.memo = cells.slice(cols.indexOf("memo")).join(" ").trim();   // 메모 속 | 합침
+      rows.push(parseTableRow(v, line));
     } else {
       others.push(line);
     }
@@ -1359,6 +1417,10 @@ function qRowHtml(r, i) {
       <button type="button" class="danger linkbtn" data-qdel="${i}">빼기</button>
     </div>
     <input data-f="name" value="${esc(r.name)}" placeholder="품목명" style="margin-top:6px">
+    <label>대표 이름 (메뉴 판단용, 비우면 품목명)</label>
+    ${(r.baseOptions || []).length > 1
+      ? `<select data-f="baseName">${r.baseOptions.map(o => `<option ${o === r.baseName ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`
+      : `<input data-f="baseName" value="${esc(r.baseName || "")}" placeholder="예: 어묵">`}
     <div class="inline">
       <select data-f="category">${opt(CATS.map(c => [c, c]), r.category)}</select>
       <select data-f="storage">${opt([["냉장","냉장"],["냉동","냉동"],["실온","실온"]], r.storage)}</select>
@@ -1447,6 +1509,10 @@ $("p_copy").onclick = async () => {
     alert("자동 복사가 안 됩니다. 펼쳐진 요청문을 길게 눌러 직접 복사해 주세요.");
   }
 };
+$("p_guideCopy").onclick = async () => {
+  try { await navigator.clipboard.writeText(buildProjectGuide()); alert("프로젝트 지침을 복사했습니다.\n클로드 앱 → 프로젝트 → 지침(Instructions)에 붙여넣어 주세요."); }
+  catch (e) { $("p_prompt").value = buildProjectGuide(); $("p_prompt").closest("details").open = true; alert("자동 복사가 안 됩니다. 아래 펼쳐진 칸의 내용을 길게 눌러 복사해 주세요."); }
+};
 $("p_clip").onclick = async () => {
   try {
     const t = await navigator.clipboard.readText();
@@ -1458,7 +1524,7 @@ $("p_clip").onclick = async () => {
 $("p_parse").onclick = () => {
   const text = $("p_text").value.trim();
   if (!text) { alert("Claude가 정리한 결과를 붙여넣어 주세요."); return; }
-  if (text.includes("[형식]") || text.includes("YYYY-MM-DD")) {
+  if (text.includes("[형식]")) {   // 요청문·지침을 잘못 붙여넣은 경우 (YYYY-MM-DD 자리표시는 빈 날짜로 처리)
     alert("요청문이 붙여넣어졌습니다.\n요청문은 Claude 채팅에 보내고, Claude의 답변을 복사해서 여기에 붙여넣어 주세요.");
     return;
   }
@@ -1495,7 +1561,7 @@ $("q_save").onclick = async () => {
     const expiry = r.expiry || estimateExpiry(r.category, r.storage, purchasedAt);
     const isWeight = r.qtyType === "weight";
     batch.set(doc(itemsCol), {
-      name, category: r.category, storage: r.storage, qtyType: r.qtyType,
+      name, baseName: String(r.baseName || "").trim().slice(0, 20) || name, category: r.category, storage: r.storage, qtyType: r.qtyType,
       amount, initialAmount: amount,
       gramsPerServing: isWeight ? (GPS[r.category] || 100) : null,
       servingEstimated: isWeight,
