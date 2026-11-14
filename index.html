@@ -240,27 +240,34 @@
   <h3>백업</h3>
   <p class="meta" id="b_last"></p>
 
-  <h4 class="sec">백업 파일 내려받기</h4>
+  <h4 class="sec">백업 파일 저장</h4>
   <p class="meta" style="margin-top:0">지금 등록된 식자재 전체(다 쓴 품목 포함)를 파일 하나로 저장합니다.
     가족 정보가 들어 있으니 다른 사람에게 보내지 마세요.</p>
   <div class="btns">
-    <button type="button" class="primary" id="b_download">내려받기</button>
+    <button type="button" class="primary" id="b_download">파일로 저장</button>
     <button type="button" id="b_copy">내용 복사</button>
   </div>
-  <div class="hint" id="b_dlMsg"></div>
+  <div class="hint" id="b_dlMsg" aria-live="polite"></div>
 
   <h4 class="sec" style="margin-top:26px">백업으로 되돌리기</h4>
-  <p class="meta" style="margin-top:0">내려받아 둔 백업 파일을 고르면, 저장하기 전에 무엇이 바뀌는지 먼저 보여 드립니다.</p>
+  <p class="meta" style="margin-top:0">백업 파일을 고르거나 복사해 둔 내용을 붙여넣으면, 저장하기 전에 무엇이 바뀌는지 먼저 보여 드립니다.</p>
   <label class="filepick"><input type="file" id="b_file" accept=".json,application/json">백업 파일 고르기</label>
   <span class="meta" id="b_fileName"></span>
-  <div id="b_preview" class="hidden" style="margin-top:12px">
+  <details style="margin-top:8px"><summary class="meta">복사해 둔 내용으로 되돌리기</summary>
+    <textarea id="b_text" rows="4" placeholder="[내용 복사]로 보관해 둔 글을 여기에 붙여넣으세요"></textarea>
+    <div class="btns"><button type="button" id="b_textGo">내용 확인</button></div>
+  </details>
+  <div id="b_preview" class="hidden" style="margin-top:12px" aria-live="polite">
     <p id="b_summary" style="margin:0 0 6px"></p>
     <div class="hint" id="b_warn"></div>
-    <label class="check"><input type="radio" name="b_mode" value="merge" checked>
-      합치기: 백업의 품목을 되살리고, 지금 있는 다른 품목은 그대로 둡니다</label>
+    <label class="check"><input type="radio" name="b_mode" value="missing" checked>
+      <span id="b_missingLabel">없는 품목만 되살리기</span></label>
+    <label class="check"><input type="radio" name="b_mode" value="overwrite">
+      <span id="b_overwriteLabel">덮어쓰기</span></label>
     <label class="check"><input type="radio" name="b_mode" value="replace">
       <span id="b_replaceLabel">완전히 되돌리기</span></label>
     <div class="btns"><button type="button" class="primary" id="b_restore">되돌리기</button></div>
+    <div class="hint" id="b_restoreMsg" aria-live="polite"></div>
   </div>
 
   <div class="btns" style="justify-content:flex-end;margin-top:18px">
@@ -672,7 +679,9 @@ function checkItem({ name, amount, qtyType, category, storage }) {
 const BACKUP_APP = "우리집 냉장고";
 const ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const isRealDate = v => typeof v === "string" && DATE_RE.test(v) && normDate(v).date === v;
 const toIso = v => (v && typeof v.toDate === "function") ? v.toDate().toISOString() : (typeof v === "string" ? v : null);
+const okIso = v => { if (typeof v !== "string") return null; const t = Date.parse(v); if (isNaN(t)) return null; const y = new Date(t).getUTCFullYear(); return y >= 1 && y <= 9999 ? new Date(t).toISOString() : null; };
 
 function buildBackup(list, exportedAt) {
   return {
@@ -681,41 +690,53 @@ function buildBackup(list, exportedAt) {
   };
 }
 
-// 백업 파일 글 → { items: [{id, data}], skipped: [사유], error }
+// 백업 글 → { items: [{id, data}], allIds: 파일에 있던 모든 식별 번호, skipped: [사유], error }
 function parseBackup(text) {
   let obj;
-  try { obj = JSON.parse(text); } catch (e) { return { error: "백업 파일을 읽지 못했습니다. 이 앱에서 내려받은 파일인지 확인해 주세요." }; }
-  if (!obj || obj.app !== BACKUP_APP || !Array.isArray(obj.items)) return { error: "우리집 냉장고 백업 파일이 아닙니다." };
-  if (obj.items.length > 5000) return { error: "품목이 너무 많은 파일입니다 (5000개 초과)." };
-  const out = [], skipped = [], seen = new Set();
+  try { obj = JSON.parse(text); } catch (e) { return { error: "백업 내용을 읽지 못했습니다. 이 앱에서 저장하거나 복사한 내용인지 확인해 주세요." }; }
+  if (!obj || obj.app !== BACKUP_APP || !Array.isArray(obj.items)) return { error: "우리집 냉장고 백업이 아닙니다." };
+  if (obj.items.length > 5000) return { error: "품목이 너무 많은 백업입니다 (5000개 초과)." };
+  const out = [], skipped = [], seen = new Set(), allIds = new Set();
   for (const it of obj.items) {
     const label = String(it?.name ?? "(이름 없음)").slice(0, 20);
-    if (!it || typeof it !== "object" || !ID_RE.test(String(it.id)) || seen.has(it.id)) { skipped.push(`${label}: 식별 번호 이상`); continue; }
+    const id = it && typeof it === "object" ? String(it.id ?? "") : "";
+    if (id) allIds.add(id);   // 검사에서 걸러져도 '백업에 있던 품목'으로 기억 → 완전히 되돌리기에서 지우지 않음
+    if (!ID_RE.test(id) || /^__.*__$/.test(id) || seen.has(id)) { skipped.push(`${label}: 식별 번호 이상`); continue; }
     const qtyType = ["weight", "count", "percent"].includes(it.qtyType) ? it.qtyType : null;
     const amount = Number(it.amount);
     const err = !qtyType ? "수량 방식 이상" : checkItem({ name: it.name, amount: it.amount, qtyType, category: it.category, storage: it.storage });
     if (err) { skipped.push(`${label}: ${err.split("\n")[0]}`); continue; }
-    const expiry = typeof it.expiry === "string" && DATE_RE.test(it.expiry) ? it.expiry : "";
+    const expiry = isRealDate(it.expiry) ? it.expiry : "";
+    const cap = qtyType === "percent" ? 100 : 100000;
     const init = Number(it.initialAmount);
     const gps = Number(it.gramsPerServing);
     const alert = Number(it.alertDays);
-    seen.add(it.id);
-    out.push({ id: it.id, data: {
+    seen.add(id);
+    out.push({ id, data: {
       name: String(it.name).trim(), category: it.category, storage: it.storage, qtyType,
       amount: round1(amount),
-      initialAmount: init >= 0 && init <= 100000 ? round1(Math.max(init, amount)) : round1(amount),
-      gramsPerServing: qtyType === "weight" && gps > 0 && gps <= 10000 ? gps : (qtyType === "weight" ? (GPS[it.category] || 100) : null),
+      initialAmount: init >= 0 && init <= cap ? round1(Math.max(init, amount)) : round1(amount),
+      gramsPerServing: qtyType === "weight" && gps > 0 && gps <= 10000 ? gps : null,
       servingEstimated: !!it.servingEstimated,
       expiry, expiryEstimated: expiry ? !!it.expiryEstimated : false,
-      alertDays: alert >= 0 && alert <= 365 ? alert : 7,
+      alertDays: Number.isInteger(alert) && alert >= 0 && alert <= 365 ? alert : 7,
       source: ["네이버", "컬리", "이마트몰", "시장", "기타"].includes(it.source) ? it.source : "기타",
-      purchasedAt: typeof it.purchasedAt === "string" && DATE_RE.test(it.purchasedAt) ? it.purchasedAt : "",
-      memo: String(it.memo ?? "").slice(0, 500),
+      purchasedAt: isRealDate(it.purchasedAt) ? it.purchasedAt : "",
+      memo: String(it.memo ?? "").slice(0, 2000),
       status: it.status === "다씀" || amount === 0 ? "다씀" : "보유",
-      createdAt: toIso(it.createdAt)
+      createdAt: okIso(it.createdAt)
     }});
   }
-  return { items: out, skipped, exportedAt: typeof obj.exportedAt === "string" ? obj.exportedAt : "" };
+  return { items: out, allIds: [...allIds], skipped, exportedAt: typeof obj.exportedAt === "string" ? obj.exportedAt : "" };
+}
+
+// 되돌리기 계획: mode = missing(없는 것만) / overwrite(덮어쓰기) / replace(완전히)
+function restorePlan(parsed, currentIds, mode) {
+  const cur = new Set(currentIds);
+  const inFile = new Set(parsed.allIds);
+  const sets = mode === "missing" ? parsed.items.filter(x => !cur.has(x.id)) : parsed.items;
+  const dels = mode === "replace" ? currentIds.filter(id => !inFile.has(id)) : [];
+  return { sets, dels };
 }
 
 // ===== 추가/수정 창 =====
@@ -1260,11 +1281,13 @@ $("q_save").onclick = async () => {
 };
 
 // ===== 백업 창 =====
-let pendingRestore = null;
+let pendingRestore = null;   // parseBackup 결과
+let restoring = false;
+const isOffline = () => !navigator.onLine || $("syncStatus").textContent.startsWith("오프라인");
 function lastBackupText() {
   let d = "";
   try { d = localStorage.getItem("lastBackup") || ""; } catch (e) {}
-  if (!d) return "이 기기에서는 아직 백업한 적이 없습니다.";
+  if (!isRealDate(d)) return "이 기기에서는 아직 백업한 적이 없습니다.";
   const n = diffDays(d, todayStr());
   return `이 기기에서 마지막 백업: ${d} (${n === 0 ? "오늘" : n + "일 전"})`;
 }
@@ -1274,90 +1297,133 @@ function markBackedUp() { try { localStorage.setItem("lastBackup", todayStr()); 
 $("backupBtn").onclick = () => {
   pendingRestore = null;
   $("b_last").textContent = lastBackupText();
-  $("b_dlMsg").textContent = $("syncStatus").textContent.startsWith("오프라인")
-    ? "지금 오프라인이라 이 기기에 저장된 내용으로 백업합니다." : "";
+  $("b_dlMsg").textContent = isOffline() ? "지금 오프라인이라 이 기기에 저장된 내용으로 백업합니다." : "";
   $("b_file").value = "";
+  $("b_text").value = "";
   $("b_fileName").textContent = "";
+  $("b_restoreMsg").textContent = "";
   $("b_preview").classList.add("hidden");
   $("backupDialog").showModal();
 };
 $("b_close").onclick = () => $("backupDialog").close();
-$("b_download").onclick = () => {
+$("backupDialog").addEventListener("cancel", e => { if (restoring) e.preventDefault(); });
+
+$("b_download").onclick = async () => {
   if (!items.length) { alert("백업할 식자재가 없습니다."); return; }
-  const blob = new Blob([backupJson()], { type: "application/json" });
+  const name = `냉장고-백업-${todayStr()}.json`;
+  const file = new File([backupJson()], name, { type: "application/json" });
+  // 휴대폰: 공유 창(파일 앱에 저장 등)으로 저장 — 끝까지 저장했을 때만 '백업함'으로 기록
+  if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: name });
+      markBackedUp();
+      $("b_dlMsg").textContent = `${items.length}개 품목을 저장했습니다. '파일' 앱 등 찾기 쉬운 곳에 두세요.`;
+    } catch (e) {
+      $("b_dlMsg").textContent = e.name === "AbortError" ? "저장을 취소했습니다." : "저장하지 못했습니다. [내용 복사]를 써 주세요.";
+    }
+    return;
+  }
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `냉장고-백업-${todayStr()}.json`;
+  a.href = URL.createObjectURL(file);
+  a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   markBackedUp();
-  $("b_dlMsg").textContent = `${items.length}개 품목을 내려받았습니다. 파일이 안 보이면 [내용 복사] 후 메모 앱에 붙여넣어 보관하세요.`;
+  $("b_dlMsg").textContent = `${items.length}개 품목 파일 내려받기를 시작했습니다. 내려받은 파일이 안 보이면 [내용 복사]를 써 주세요.`;
 };
 $("b_copy").onclick = async () => {
   if (!items.length) { alert("백업할 식자재가 없습니다."); return; }
   try {
     await navigator.clipboard.writeText(backupJson());
     markBackedUp();
-    $("b_dlMsg").textContent = `${items.length}개 품목을 복사했습니다. 메모 앱 등에 붙여넣어 보관하세요.`;
-  } catch (e) { alert("이 기기에서는 복사가 안 됩니다. [내려받기]를 써 주세요."); }
+    $("b_dlMsg").textContent = `${items.length}개 품목을 복사했습니다. 메모 앱 등에 붙여넣어 보관하세요. 되돌릴 때는 아래 [복사해 둔 내용으로 되돌리기]에 붙여넣으면 됩니다.`;
+  } catch (e) { alert("이 기기에서는 복사가 안 됩니다. [파일로 저장]을 써 주세요."); }
 };
 
+function showRestorePreview(text) {
+  $("b_preview").classList.add("hidden");
+  $("b_restoreMsg").textContent = "";
+  pendingRestore = null;
+  const r = parseBackup(text);
+  if (r.error) { alert(r.error); return; }
+  if (!r.items.length) { alert("되살릴 수 있는 품목이 없습니다." + (r.skipped.length ? "\n값이 이상해 건너뛴 품목: " + r.skipped.length + "개" : "")); return; }
+  pendingRestore = r;
+  const ids = items.map(x => x.id);
+  const m = restorePlan(r, ids, "missing"), o = restorePlan(r, ids, "overwrite"), x = restorePlan(r, ids, "replace");
+  const when = r.exportedAt ? r.exportedAt.slice(0, 10) + " 백업" : "백업";
+  $("b_summary").innerHTML = `<b>${esc(when)}</b>: 품목 ${r.items.length}개` +
+    `<br><span class="meta">이 중 ${m.sets.length}개는 지금 없는 품목이고, ${r.items.length - m.sets.length}개는 지금도 있는 품목입니다.</span>`;
+  $("b_warn").textContent = r.skipped.length
+    ? `값이 이상해서 건너뛸 품목 ${r.skipped.length}개 (지금 있는 같은 품목은 그대로 둡니다): ${r.skipped.slice(0, 3).join(", ")}${r.skipped.length > 3 ? " …" : ""}` : "";
+  $("b_missingLabel").textContent = `없는 품목만 되살리기 (${m.sets.length}개): 지금 있는 품목은 건드리지 않습니다`;
+  $("b_overwriteLabel").textContent = `덮어쓰기 (${o.sets.length}개): 지금도 있는 품목은 백업 때 내용으로 바뀝니다. 그 뒤에 쓴 양·수정이 사라집니다`;
+  $("b_replaceLabel").textContent = x.dels.length
+    ? `완전히 되돌리기: 덮어쓰기에 더해, 백업에 없는 지금 품목 ${x.dels.length}개를 삭제합니다`
+    : "완전히 되돌리기: 백업에 없는 지금 품목이 없어 덮어쓰기와 같습니다";
+  document.querySelector('input[name="b_mode"][value="missing"]').checked = true;
+  $("b_preview").classList.remove("hidden");
+}
 $("b_file").onchange = async () => {
   const f = $("b_file").files[0];
   $("b_fileName").textContent = f ? " " + f.name : "";
-  $("b_preview").classList.add("hidden");
-  pendingRestore = null;
-  if (!f) return;
+  if (!f) { $("b_preview").classList.add("hidden"); pendingRestore = null; return; }
   if (f.size > 5 * 1024 * 1024) { alert("파일이 너무 큽니다 (5MB 초과)."); return; }
-  const r = parseBackup(await f.text());
-  if (r.error) { alert(r.error); return; }
-  if (!r.items.length) { alert("되살릴 수 있는 품목이 없습니다." + (r.skipped.length ? "\n건너뛴 품목: " + r.skipped.length + "개" : "")); return; }
-  const backupIds = new Set(r.items.map(x => x.id));
-  const existing = new Set(items.map(x => x.id));
-  const overwrite = r.items.filter(x => existing.has(x.id)).length;
-  const removeIds = items.filter(x => !backupIds.has(x.id)).map(x => x.id);
-  pendingRestore = { items: r.items, removeIds };
-  const when = r.exportedAt ? r.exportedAt.slice(0, 10) + " 백업" : "백업";
-  $("b_summary").innerHTML = `<b>${esc(when)}</b>: 품목 ${r.items.length}개<br>` +
-    `<span class="meta">지금 있는 품목 중 ${overwrite}개는 백업 내용으로 바뀌고, ${r.items.length - overwrite}개는 새로 생깁니다.</span>`;
-  $("b_warn").textContent = r.skipped.length
-    ? `값이 이상해서 건너뛸 품목 ${r.skipped.length}개: ${r.skipped.slice(0, 3).join(", ")}${r.skipped.length > 3 ? " …" : ""}` : "";
-  $("b_replaceLabel").textContent = removeIds.length
-    ? `완전히 되돌리기: 백업에 없는 지금 품목 ${removeIds.length}개는 삭제됩니다`
-    : "완전히 되돌리기: 백업에 없는 지금 품목이 없어 합치기와 같습니다";
-  document.querySelector('input[name="b_mode"][value="merge"]').checked = true;
-  $("b_preview").classList.remove("hidden");
+  showRestorePreview(await f.text());
+};
+$("b_textGo").onclick = () => {
+  const t = $("b_text").value.trim();
+  if (!t) { alert("복사해 둔 백업 내용을 붙여넣어 주세요."); return; }
+  if (t.length > 5 * 1024 * 1024) { alert("내용이 너무 깁니다 (5MB 초과)."); return; }
+  $("b_fileName").textContent = "";
+  showRestorePreview(t);
 };
 
 $("b_restore").onclick = async () => {
-  if (!pendingRestore) return;
-  if ($("syncStatus").textContent.startsWith("오프라인")) { alert("지금 오프라인입니다. 인터넷에 연결된 뒤 되돌려 주세요."); return; }
-  const replace = document.querySelector('input[name="b_mode"]:checked').value === "replace";
-  const { items: list, removeIds } = pendingRestore;
-  const dels = replace ? removeIds : [];
-  const msg = `품목 ${list.length}개를 백업 내용으로 저장합니다.` +
+  if (!pendingRestore || restoring) return;
+  if (isOffline()) { alert("지금 인터넷에 연결되어 있지 않습니다. 연결된 뒤 되돌려 주세요."); return; }
+  const mode = document.querySelector('input[name="b_mode"]:checked').value;
+  const { sets, dels } = restorePlan(pendingRestore, items.map(x => x.id), mode);   // 누르는 순간의 목록으로 다시 계산
+  if (!sets.length && !dels.length) { alert("바꿀 내용이 없습니다. 지금 목록에 백업의 품목이 모두 있습니다."); return; }
+  const msg = (sets.length ? `품목 ${sets.length}개를 백업 내용으로 저장합니다.` : "") +
+    (mode !== "missing" && sets.length ? "\n지금도 있는 품목은 백업 때 내용으로 바뀝니다." : "") +
     (dels.length ? `\n\n백업에 없는 지금 품목 ${dels.length}개를 삭제합니다. 삭제하면 되돌릴 수 없습니다.` : "") +
     "\n\n진행할까요?";
   if (!confirm(msg)) return;
+  // 모든 묶음을 먼저 만들어 한꺼번에 기기에 예약 → 앱을 닫아도 남은 묶음이 빠지지 않음. 저장 → 삭제 순서
   const ops = [
-    ...list.map(x => b => b.set(doc(db, "items", x.id), {
+    ...sets.map(x => b => b.set(doc(db, "items", x.id), {
       ...x.data,
-      createdAt: x.data.createdAt && !isNaN(Date.parse(x.data.createdAt)) ? Timestamp.fromDate(new Date(x.data.createdAt)) : serverTimestamp(),
+      createdAt: x.data.createdAt ? Timestamp.fromDate(new Date(x.data.createdAt)) : serverTimestamp(),
       updatedAt: serverTimestamp(), updatedBy: who()
     })),
     ...dels.map(id => b => b.delete(doc(db, "items", id)))
   ];
-  $("backupDialog").close();
-  pendingRestore = null;
+  let batches;
   try {
-    for (let i = 0; i < ops.length; i += 400) {   // 한 번에 최대 500건 제한 → 400건씩 나눠 저장
+    batches = [];
+    for (let i = 0; i < ops.length; i += 200) {   // 한 묶음 최대 500건 제한 → 여유 있게 200건씩
       const b = writeBatch(db);
-      ops.slice(i, i + 400).forEach(op => op(b));
-      await b.commit();
+      ops.slice(i, i + 200).forEach(op => op(b));
+      batches.push(b);
     }
-    alert(`되돌리기 완료: ${list.length}개 저장${dels.length ? `, ${dels.length}개 삭제` : ""}`);
   } catch (err) {
-    alert("되돌리기 중 오류가 났습니다: " + err.code + "\n일부만 저장됐을 수 있으니 목록을 확인해 주세요.");
+    alert("백업 내용을 준비하다 문제가 생겨 아무것도 바꾸지 않았습니다.\n" + (err.message || err));
+    return;
+  }
+  restoring = true;
+  $("b_restore").disabled = true; $("b_close").disabled = true;
+  $("b_restoreMsg").textContent = "되돌리는 중… 창을 닫지 말고 잠시 기다려 주세요.";
+  try {
+    await Promise.all(batches.map(b => b.commit()));
+    $("b_restoreMsg").textContent = "";
+    alert(`되돌리기 완료: ${sets.length}개 저장${dels.length ? `, ${dels.length}개 삭제` : ""}`);
+    $("backupDialog").close();
+  } catch (err) {
+    $("b_restoreMsg").textContent = "되돌리기 중 오류가 났습니다 (" + (err.code || err.message) + "). 목록을 확인해 주세요.";
+  } finally {
+    restoring = false; pendingRestore = null;
+    $("b_restore").disabled = false; $("b_close").disabled = false;
+    $("b_preview").classList.add("hidden");
   }
 };
 </script>
