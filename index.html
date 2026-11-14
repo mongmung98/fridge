@@ -174,6 +174,7 @@
           <button class="chip" data-st="냉장">냉장</button>
           <button class="chip" data-st="냉동">냉동</button>
           <button class="chip" data-st="실온">실온</button>
+          <button class="chip" data-st="조미료">조미료</button>
         </div>
         <div class="seg" id="viewSeg">
           <button data-v="simple" class="on">간단히</button>
@@ -207,7 +208,10 @@
           <button class="chip" data-rt="web">인터넷</button>
           <button class="chip" data-rt="claude">클로드</button>
         </div>
-        <button class="mini" id="r_addWeb">인터넷 레시피 추가</button>
+        <div style="display:flex;gap:6px">
+          <button class="mini fill" id="r_addMine">멍꼬북 레시피 추가</button>
+          <button class="mini" id="r_addWeb">인터넷 레시피 추가</button>
+        </div>
       </div>
       <div id="recipeList"></div>
     </div>
@@ -285,6 +289,38 @@
     <div style="display:flex;gap:6px">
       <button type="button" id="m_cancel">닫기</button>
       <button type="button" class="primary" id="m_parse">목록에 보이기</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- 멍꼬북 레시피 추가 창 -->
+<dialog id="mineDialog">
+  <h3>멍꼬북 레시피 추가</h3>
+  <div id="mn_step1">
+    <p class="meta"><b>① 요청문 복사</b><br>클로드 채팅에 붙여넣고, 맨 아래 '내 레시피:' 다음에 레시피를 대충 적어 보내세요.
+      여러 개를 한 번에 적어도 됩니다.</p>
+    <div class="btns"><button type="button" class="primary" id="mn_copy">요청문 복사</button></div>
+    <details style="margin-top:6px"><summary class="meta">요청문 내용 보기</summary>
+      <textarea id="mn_prompt" rows="8" readonly style="font-size:13px"></textarea></details>
+    <p class="meta" style="margin-top:16px"><b>② 클로드 답변 붙여넣기</b></p>
+    <textarea id="mn_text" rows="6" placeholder="[멍꼬북레시피]&#10;메뉴: 두부조림&#10;인분: 2&#10;주재료: 두부 1모, 대파 1/2대&#10;양념: 간장 2큰술, 고춧가루 1큰술&#10;조리법: 1. 두부를 부친다 2. 양념을 붓고 조린다&#10;메모:"></textarea>
+    <div class="btns" style="justify-content:space-between;flex-wrap:wrap">
+      <button type="button" id="mn_blank">클로드 없이 직접 쓰기</button>
+      <div style="display:flex;gap:6px">
+        <button type="button" id="mn_cancel1">닫기</button>
+        <button type="button" class="primary" id="mn_parse">확인 화면으로</button>
+      </div>
+    </div>
+  </div>
+  <div id="mn_step2" class="hidden">
+    <p class="meta">내용을 확인하고 고쳐 주세요. 재료는 쉼표로 나눕니다. <b>[모두 저장]을 눌러야 저장됩니다.</b></p>
+    <div id="mn_rows"></div>
+    <div class="btns" style="justify-content:space-between;margin-top:12px">
+      <button type="button" id="mn_back">← 다시 붙여넣기</button>
+      <div style="display:flex;gap:6px">
+        <button type="button" id="mn_cancel2">취소</button>
+        <button type="button" class="primary" id="mn_save">모두 저장</button>
+      </div>
     </div>
   </div>
 </dialog>
@@ -638,12 +674,12 @@ function volumeText(it) {
 }
 
 // 한 줄 품목. right = "qty"(수량) 또는 "dday"(유통기한 남은 날)
-function rowHtml(it, right = "qty") {
+function rowHtml(it, right = "qty", showStorage = false) {
   const es = expState(it);
   const open = viewMode === "detail" || openIds.has(it.id);
   const pct = it.initialAmount > 0 ? Math.max(0, Math.min(100, it.amount / it.initialAmount * 100)) : 0;
   const rightTxt = right === "dday" ? ddayText(it) : shortAmount(it);
-  const tag = right === "dday" ? `<span class="item-tag">${esc(it.storage)}</span>` : "";
+  const tag = right === "dday" || showStorage ? `<span class="item-tag">${esc(it.storage)}</span>` : "";
   const estTag = right === "dday" && it.expiry && it.expiryEstimated ? '<span class="tape est">추정</span>' : "";
   return `<div class="item">
     <button class="item-main" data-act="toggle" data-id="${esc(it.id)}" aria-expanded="${open}">
@@ -680,8 +716,10 @@ const listHtml = (arr, fn, cls = "") => `<div class="list ${cls}">${arr.map(x =>
 
 function renderItems() {
   const q = $("searchBox").value.trim();
+  const isSea = it => it.category === "양념·소스";
   const list = items.filter(it =>
-    (storageFilter === "전체" || it.storage === storageFilter) &&
+    (storageFilter === "전체" ||
+      (storageFilter === "조미료" ? isSea(it) : it.storage === storageFilter && !isSea(it))) &&
     (!q || String(it.name || "").includes(q) || String(it.baseName || "").includes(q)));
   const active = sortItems(list.filter(it => it.status !== "다씀"));
   const used = sortItems(list.filter(it => it.status === "다씀"));
@@ -691,15 +729,16 @@ function renderItems() {
       ? "조건에 맞는 식자재가 없습니다."
       : "아직 등록된 식자재가 없습니다.<br>빠른 입력이나 + 버튼으로 추가하세요.") + "</p></div>";
   } else if (storageFilter === "전체") {
-    // 냉장고 칸처럼 냉장 / 냉동 / 실온으로 나눠 보여 줌
+    // 냉장고 칸처럼 냉장 / 냉동 / 실온으로 나눠 보여 주고, 조미료(양념·소스)는 보관 장소와 상관없이 맨 아래 따로
     const KNOWN = ["냉장", "냉동", "실온"];
+    const food = active.filter(it => !isSea(it)), sea = active.filter(isSea);
     html = [...KNOWN, "기타"].map(st => {
-      const arr = active.filter(it => st === "기타" ? !KNOWN.includes(it.storage) : it.storage === st);
+      const arr = food.filter(it => st === "기타" ? !KNOWN.includes(it.storage) : it.storage === st);
       return arr.length ? `<h2 class="group">${st} <span class="num">${arr.length}</span></h2>` +
         listHtml(arr, it => rowHtml(it), st === "냉동" ? "frozen" : "") : "";
-    }).join("");
+    }).join("") + (sea.length ? `<h2 class="group">조미료 <span class="num">${sea.length}</span></h2>` + listHtml(sea, it => rowHtml(it, "qty", true)) : "");
   } else {
-    html = listHtml(active, it => rowHtml(it), storageFilter === "냉동" ? "frozen" : "");
+    html = listHtml(active, it => rowHtml(it, "qty", storageFilter === "조미료"), storageFilter === "냉동" ? "frozen" : "");
   }
   if ($("showUsed").checked) {
     html += '<h2 class="group">다 쓴 품목</h2>' + (used.length ? listHtml(used, usedRowHtml) : '<p class="meta">없음</p>');
@@ -854,6 +893,12 @@ const normName = s => String(s || "").replace(/[\s()（）\[\]]/g, "");
 // 다르게 부르는 같은 재료 / 늘 있다고 보는 재료
 const ALIASES = { "달걀": ["계란"], "계란": ["달걀"], "쇠고기": ["소고기"], "소고기": ["쇠고기"], "파": ["대파", "쪽파"] };
 const BASIC_INGS = ["밥", "쌀", "물", "공기밥", "즉석밥", "찬밥"];
+// 조미료 이름인지 (간장·국간장·고추장·참기름·꽃소금 …) → 주재료가 아니라 양념으로 취급
+const SEASONING_WORDS = CAT_HINTS.find(([c]) => c === "양념·소스")[1];
+function isSeasoningName(n) {
+  const x = normName(n);
+  return !!x && SEASONING_WORDS.some(w => x === w || (w.length >= 2 && x.endsWith(w)));
+}
 
 // "돼지고기 앞다리 300g" → { name: "돼지고기 앞다리", qty: "300g" }
 function splitIngredient(t) {
@@ -891,7 +936,7 @@ function analyzeRecipe(rec, list) {
   const have = [], missing = [], soon = [];
   let over = false;
   for (const ing of rec.ingredients || []) {
-    if (BASIC_INGS.includes(normName(ing.name))) continue;   // 밥·쌀·물은 있다고 봄
+    if (BASIC_INGS.includes(normName(ing.name)) || isSeasoningName(ing.name)) continue;   // 밥·쌀·물·조미료는 있다고 봄
     const it = findItem(ing.name, act);
     if (it) {
       have.push({ ing, item: it });
@@ -927,7 +972,7 @@ function buildMenuPrompt(list, people, req) {
 
 보유 재료 (유통기한 임박 순, ★ = 지남·임박)
 ${main.map(line).join("\n") || "- (없음)"}
-${sea.length ? "\n보유 양념\n" + sea.map(it => "- " + it.name).join("\n") + "\n" : ""}
+${sea.length ? "\n보유 조미료\n" + sea.map(it => "- " + it.name).join("\n") + "\n" : ""}
 [형식]
 [냉장고메뉴]
 구분 | 메뉴 | 주재료 | 양념 | 인분 | 요약 | 임박 재료
@@ -969,6 +1014,73 @@ function parseMenus(text) {
     });
   }
   return { menus, skipped };
+}
+
+// 멍꼬북 레시피: 대충 적은 레시피를 클로드가 정리하도록 하는 요청문
+function buildMinePrompt() {
+  return `아래에 내가 대충 적은 우리집(멍꼬북) 레시피를 '우리집 냉장고' 앱 형식으로 정리해 줘.
+
+규칙
+- 아래 [형식] 그대로, 레시피마다 [멍꼬북레시피] 블록 하나씩, 다른 설명 없이 코드 블록 하나로만 답해 줘.
+- 메뉴: 짧은 요리 이름.
+- 주재료: 조미료를 뺀 재료를 대표 이름(일반 재료 이름, 예: 두툼한 사각어묵 → 어묵)과 양으로, 쉼표로 나눠 줘. 예: 두부 1모, 대파 1/2대
+- 양념: 간장·소금·설탕·고춧가루·고추장·된장·참기름·식용유·식초 같은 조미료는 주재료가 아니라 여기에 양과 함께 적어 줘.
+- 양을 안 적은 재료는 이름만 적어 줘. 짐작해서 채우지 마.
+- 인분: 숫자만. 모르면 비워 둬.
+- 조리법: 내가 적은 순서를 살려 번호 붙인 짧은 문장으로 (1. … 2. …). 내가 적지 않은 단계는 지어내지 말고, 빠진 것 같으면 메모에 '확인 필요: …'라고 적어 줘.
+- 메모: 팁이나 우리집만의 포인트. 없으면 비워 둬.
+
+[형식]
+[멍꼬북레시피]
+메뉴:
+인분:
+주재료:
+양념:
+조리법:
+메모:
+
+내 레시피:
+`;
+}
+
+// 클로드 답변(또는 직접 쓴 글) → 레시피 여러 개. 주재료에 섞인 조미료는 양념으로 옮김
+function parseMineRecipes(text) {
+  text = String(text || "");
+  if (text.includes("[형식]")) return { error: "요청문이 붙여넣어졌습니다.\n요청문 아래에 레시피를 적어 클로드에게 보내고, 클로드의 답변을 붙여넣어 주세요." };
+  const KEYS = { 메뉴: "name", 메뉴명: "name", 요리: "name", 이름: "name", 인분: "serv", 주재료: "ing", 재료: "ing",
+    양념: "sea", 조미료: "sea", 양념장: "sea", 조리법: "steps", 만드는법: "steps", 요약: "steps", 순서: "steps", 메모: "memo" };
+  const blocks = text.replace(/```[a-z]*/gi, "").split(/\[\s*멍꼬북\s*레시피\s*\]/).filter(b => b.trim());
+  const recipes = [];
+  for (const b of blocks) {
+    const v = {}; let cur = null;
+    for (const line0 of b.split(/\r?\n/)) {
+      const line = line0.replace(/\*\*/g, "").replace(/^\s*[-•]\s+/, "").trim();
+      const m = line.match(/^([가-힣\s]{1,6})\s*[:：]\s*(.*)$/);
+      const key = m && KEYS[m[1].replace(/\s/g, "")];
+      if (key) { cur = key; v[key] = m[2].trim(); }
+      else if (cur && line) v[cur] = (v[cur] ? v[cur] + "\n" : "") + line;   // 여러 줄 조리법
+    }
+    if (!v.name && !v.ing) continue;
+    const all = splitList(String(v.ing || "").replace(/\n/g, ",")).slice(0, 40).map(splitIngredient);
+    const seaFromIng = all.filter(g => isSeasoningName(g.name)).map(g => g.name + (g.qty ? " " + g.qty : ""));
+    recipes.push({
+      name: String(v.name || "").trim(),
+      servings: Number(String(v.serv || "").match(/\d+/)?.[0]) || null,
+      ingredients: all.filter(g => !isSeasoningName(g.name)),
+      seasonings: [...splitList(String(v.sea || "").replace(/\n/g, ",")), ...seaFromIng].slice(0, 40),
+      steps: String(v.steps || "").trim(),
+      memo: String(v.memo || "").trim()
+    });
+  }
+  return { recipes };
+}
+
+function checkMineRecipe(r) {
+  if (!r.name || r.name.length > 40) return "메뉴 이름을 40자 이내로 입력해 주세요.";
+  if (!r.ingredients.length) return `'${r.name}': 주재료를 하나 이상 입력해 주세요.`;
+  if (r.steps.length > 1000) return `'${r.name}': 조리법은 1000자 이내로 줄여 주세요.`;
+  if (r.memo.length > 300) return `'${r.name}': 메모는 300자 이내로 줄여 주세요.`;
+  return "";
 }
 
 // 인터넷 레시피 입력 검사
@@ -1601,7 +1713,10 @@ const safeUrl = u => /^https?:\/\//.test(String(u || "")) ? esc(u) : "";
 function menuRowHtml(key, rec, an, opts = {}) {
   const open = openMenu.has(key);
   const right = opts.right ?? (an.canMake ? "재료 있음" : `없는 재료 ${an.missing.length}`);
-  const ingHtml = (rec.ingredients || []).map(g => {
+  // 주재료에 섞여 들어온 조미료는 양념 줄로 옮겨 보여 줌
+  const seaIngs = (rec.ingredients || []).filter(g => isSeasoningName(g.name));
+  const seasonings = [...(rec.seasonings || []), ...seaIngs.map(g => g.name + (g.qty ? " " + g.qty : ""))];
+  const ingHtml = (rec.ingredients || []).filter(g => !isSeasoningName(g.name)).map(g => {
     const ok = an.have.some(h => h.ing === g);
     return `<span class="${ok ? "ing-have" : "ing-miss"}">${esc(g.name)}${g.qty ? " " + esc(g.qty) : ""}${ok ? "" : " (없음)"}</span>`;
   }).join(", ");
@@ -1615,9 +1730,10 @@ function menuRowHtml(key, rec, an, opts = {}) {
     <div></div>
     ${open ? `<div class="item-detail"><dl>
       <dt>주재료</dt><dd>${ingHtml || "-"}</dd>
-      ${(rec.seasonings || []).length ? `<dt>양념</dt><dd>${esc(rec.seasonings.join(", "))}</dd>` : ""}
+      ${seasonings.length ? `<dt>양념</dt><dd>${esc(seasonings.join(", "))}</dd>` : ""}
       ${rec.servings ? `<dt>인분</dt><dd>${esc(rec.servings)}인분</dd>` : ""}
-      ${rec.steps ? `<dt>요약</dt><dd>${esc(rec.steps)}</dd>` : ""}
+      ${rec.steps ? `<dt>${rec.type === "mine" ? "조리법" : "요약"}</dt><dd style="white-space:pre-line">${esc(rec.steps)}</dd>` : ""}
+      ${rec.memo ? `<dt>메모</dt><dd>${esc(rec.memo)}</dd>` : ""}
       ${rec.sourceName || url ? `<dt>${rec.type === "mine" ? "원래 출처" : "출처"}</dt><dd>${esc(rec.sourceName || "")} ${url ? `<a href="${url}" target="_blank" rel="noopener noreferrer">링크 열기</a>` : ""}</dd>` : ""}
     </dl>
     <div class="btns">${opts.buttons || ""}</div></div>` : ""}
@@ -1747,6 +1863,84 @@ $("m_parse").onclick = () => {
   $("menuDialog").close();
   renderMenus();
   if (r.skipped.length) alert(`메뉴 ${r.menus.length}개를 불러왔습니다. 형식이 맞지 않아 건너뛴 줄: ${r.skipped.length}개`);
+};
+
+// 멍꼬북 레시피 추가 창
+let mineRows = [];
+const ingText = list => (list || []).map(g => g.name + (g.qty ? " " + g.qty : "")).join(", ");
+function mineRowHtml(r, i) {
+  return `<div class="qrow" data-mi="${i}">
+    <div class="row"><b>레시피 ${i + 1}</b><button type="button" class="danger linkbtn" data-mdel="${i}">빼기</button></div>
+    <div class="inline">
+      <div style="flex:3"><label>메뉴 이름</label><input data-mf="name" value="${esc(r.name)}" placeholder="예: 엄마표 두부조림"></div>
+      <div><label>인분</label><input data-mf="servings" type="number" inputmode="numeric" min="1" max="20" value="${esc(r.servings ?? "")}"></div>
+    </div>
+    <label>주재료 (쉼표로 구분)</label><input data-mf="ing" value="${esc(ingText(r.ingredients))}" placeholder="두부 1모, 대파 1/2대">
+    <label>양념 (쉼표로 구분)</label><input data-mf="sea" value="${esc((r.seasonings || []).join(", "))}" placeholder="간장 2큰술, 고춧가루 1큰술">
+    <label>조리법</label><textarea data-mf="steps" rows="4" maxlength="1000">${esc(r.steps)}</textarea>
+    <label>메모</label><input data-mf="memo" value="${esc(r.memo)}" maxlength="300">
+  </div>`;
+}
+function readMineRows() {
+  document.querySelectorAll("#mn_rows .qrow").forEach(el => {
+    const f = k => el.querySelector(`[data-mf="${k}"]`).value;
+    const all = splitList(f("ing")).slice(0, 40).map(splitIngredient);
+    mineRows[Number(el.dataset.mi)] = {
+      name: f("name").trim(), servings: Math.min(20, Math.max(1, Math.round(Number(f("servings"))))) || null,
+      ingredients: all.filter(g => !isSeasoningName(g.name)),
+      seasonings: [...splitList(f("sea")), ...all.filter(g => isSeasoningName(g.name)).map(g => g.name + (g.qty ? " " + g.qty : ""))].slice(0, 40),
+      steps: f("steps").trim(), memo: f("memo").trim()
+    };
+  });
+}
+function showMineStep(n) {
+  $("mn_step1").classList.toggle("hidden", n !== 1);
+  $("mn_step2").classList.toggle("hidden", n !== 2);
+}
+function renderMineRows() {
+  $("mn_rows").innerHTML = mineRows.length ? mineRows.map(mineRowHtml).join("") : '<p class="meta">남은 레시피가 없습니다.</p>';
+}
+$("r_addMine").onclick = () => {
+  $("mn_prompt").value = buildMinePrompt();
+  $("mn_text").value = "";
+  showMineStep(1);
+  $("mineDialog").showModal();
+};
+$("mn_cancel1").onclick = () => $("mineDialog").close();
+$("mn_cancel2").onclick = () => $("mineDialog").close();
+$("mn_back").onclick = () => showMineStep(1);
+$("mn_copy").onclick = async () => {
+  try { await navigator.clipboard.writeText(buildMinePrompt()); alert("요청문을 복사했습니다.\n클로드 채팅에 붙여넣고, '내 레시피:' 아래에 레시피를 적어 보내세요."); }
+  catch (e) { $("mn_prompt").closest("details").open = true; $("mn_prompt").select(); alert("자동 복사가 안 됩니다. 펼쳐진 요청문을 길게 눌러 복사해 주세요."); }
+};
+$("mn_blank").onclick = () => {
+  mineRows = [{ name: "", servings: null, ingredients: [], seasonings: [], steps: "", memo: "" }];
+  renderMineRows(); showMineStep(2);
+};
+$("mn_parse").onclick = () => {
+  const r = parseMineRecipes($("mn_text").value);
+  if (r.error) { alert(r.error); return; }
+  if (!r.recipes.length) { alert("레시피를 찾지 못했습니다. 클로드 답변을 그대로 붙여넣거나 [클로드 없이 직접 쓰기]를 눌러 주세요."); return; }
+  mineRows = r.recipes.slice(0, 20);
+  renderMineRows(); showMineStep(2);
+};
+$("mn_rows").addEventListener("click", e => {
+  const b = e.target.closest("[data-mdel]");
+  if (!b) return;
+  readMineRows(); mineRows.splice(Number(b.dataset.mdel), 1); renderMineRows();
+});
+$("mn_save").onclick = async () => {
+  readMineRows();
+  if (!mineRows.length) { alert("저장할 레시피가 없습니다."); return; }
+  for (const r of mineRows) { const err = checkMineRecipe(r); if (err) { alert(err); return; } }
+  const batch = writeBatch(db);
+  mineRows.forEach(r => batch.set(doc(recipesCol), {
+    type: "mine", ...r, sourceName: "", sourceUrl: "",
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: who()
+  }));
+  $("mineDialog").close();
+  try { await batch.commit(); }
+  catch (err) { recipeWriteError(err); showMineStep(2); $("mineDialog").showModal(); }
 };
 
 // 인터넷 레시피 추가 창
