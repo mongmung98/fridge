@@ -894,7 +894,11 @@ const normName = s => String(s || "").replace(/[\s()（）\[\]]/g, "");
 const ALIASES = { "달걀": ["계란"], "계란": ["달걀"], "쇠고기": ["소고기"], "소고기": ["쇠고기"], "파": ["대파", "쪽파"] };
 const BASIC_INGS = ["밥", "쌀", "물", "공기밥", "즉석밥", "찬밥"];
 // 조미료 이름인지 (간장·국간장·고추장·참기름·꽃소금 …) → 주재료가 아니라 양념으로 취급
-const SEASONING_WORDS = CAT_HINTS.find(([c]) => c === "양념·소스")[1];
+// 레시피용 조미료 이름: 식자재 분류 사전(카레 제외) + 레시피에 자주 나오는 양념
+const SEASONING_WORDS = [...CAT_HINTS.find(([c]) => c === "양념·소스")[1].filter(w => w !== "카레" && w !== "마요"),
+  "마요네즈", "깨", "참깨", "통깨", "깨소금", "들깨가루", "맛술", "미림", "청주", "요리술", "새우젓", "매실청", "매실액",
+  "카놀라유", "포도씨유", "해바라기유", "다진마늘", "다진생강", "생강가루", "치킨스톡", "연두", "꿀", "조청",
+  "전분", "감자전분", "부침가루", "튀김가루", "밀가루", "빵가루", "굴소스", "와사비", "겨자", "머스타드"];
 function isSeasoningName(n) {
   const x = normName(n);
   return !!x && SEASONING_WORDS.some(w => x === w || (w.length >= 2 && x.endsWith(w)));
@@ -1024,7 +1028,7 @@ function buildMinePrompt() {
 - 아래 [형식] 그대로, 레시피마다 [멍꼬북레시피] 블록 하나씩, 다른 설명 없이 코드 블록 하나로만 답해 줘.
 - 메뉴: 짧은 요리 이름.
 - 주재료: 조미료를 뺀 재료를 대표 이름(일반 재료 이름, 예: 두툼한 사각어묵 → 어묵)과 양으로, 쉼표로 나눠 줘. 예: 두부 1모, 대파 1/2대
-- 양념: 간장·소금·설탕·고춧가루·고추장·된장·참기름·식용유·식초 같은 조미료는 주재료가 아니라 여기에 양과 함께 적어 줘.
+- 양념: 간장·소금·설탕·고춧가루·고추장·된장·참기름·식용유·식초·깨·맛술·다진 마늘 같은 조미료는 주재료가 아니라 여기에 양과 함께 적어 줘.
 - 양을 안 적은 재료는 이름만 적어 줘. 짐작해서 채우지 마.
 - 인분: 숫자만. 모르면 비워 둬.
 - 조리법: 내가 적은 순서를 살려 번호 붙인 짧은 문장으로 (1. … 2. …). 내가 적지 않은 단계는 지어내지 말고, 빠진 것 같으면 메모에 '확인 필요: …'라고 적어 줘.
@@ -1047,19 +1051,32 @@ function buildMinePrompt() {
 function parseMineRecipes(text) {
   text = String(text || "");
   if (text.includes("[형식]")) return { error: "요청문이 붙여넣어졌습니다.\n요청문 아래에 레시피를 적어 클로드에게 보내고, 클로드의 답변을 붙여넣어 주세요." };
-  const KEYS = { 메뉴: "name", 메뉴명: "name", 요리: "name", 이름: "name", 인분: "serv", 주재료: "ing", 재료: "ing",
-    양념: "sea", 조미료: "sea", 양념장: "sea", 조리법: "steps", 만드는법: "steps", 요약: "steps", 순서: "steps", 메모: "memo" };
-  const blocks = text.replace(/```[a-z]*/gi, "").split(/\[\s*멍꼬북\s*레시피\s*\]/).filter(b => b.trim());
-  const recipes = [];
+  const KEYS = { 메뉴: "name", 메뉴명: "name", 요리: "name", 요리명: "name", 이름: "name", 인분: "serv", 주재료: "ing", 재료: "ing",
+    양념: "sea", 조미료: "sea", 양념장: "sea", 조리법: "steps", 만드는법: "steps", 만드는방법: "steps", 조리순서: "steps",
+    요약: "steps", 순서: "steps", 메모: "memo" };
+  // 코드 블록이 있으면 그 안만 읽음 (앞뒤 인사말 무시)
+  const fenced = text.split("```");
+  if (fenced.length >= 3) text = fenced.filter((_, i) => i % 2 === 1).map(x => x.replace(/^[a-z]*\n/i, "")).join("\n");
+  const blocks = text.split(/\[\s*멍꼬북\s*레시피\s*\]/).filter(b => b.trim());
+  const raws = [];
   for (const b of blocks) {
-    const v = {}; let cur = null;
+    let v = {}, cur = null;
     for (const line0 of b.split(/\r?\n/)) {
-      const line = line0.replace(/\*\*/g, "").replace(/^\s*[-•]\s+/, "").trim();
-      const m = line.match(/^([가-힣\s]{1,6})\s*[:：]\s*(.*)$/);
-      const key = m && KEYS[m[1].replace(/\s/g, "")];
+      const line = line0.replace(/\*\*/g, "").trim();
+      const keyLine = line.replace(/^(?:[-•*·]\s+|#+\s*)/, "");
+      const m = keyLine.match(/^([가-힣\s]{1,6})\s*[:：]\s*(.*)$/);
+      let key = m && KEYS[m[1].replace(/\s/g, "")];
+      // 조리법을 읽는 중에는 '메모:'만 새 칸으로 봄 ('양념장: …' 같은 조리법 속 줄은 조리법으로)
+      if (key && cur === "steps" && key !== "memo") key = null;
+      if (key && key !== "name" && v[key]) key = null;                 // 이미 채운 칸은 덮어쓰지 않음
+      if (key === "name" && v.name) { raws.push(v); v = {}; }          // 머리표 없이 이어 쓴 다음 레시피
       if (key) { cur = key; v[key] = m[2].trim(); }
-      else if (cur && line) v[cur] = (v[cur] ? v[cur] + "\n" : "") + line;   // 여러 줄 조리법
+      else if ((cur === "steps" || cur === "memo") && line && !/^#+\s/.test(line)) v[cur] = (v[cur] ? v[cur] + "\n" : "") + line;
     }
+    raws.push(v);
+  }
+  const recipes = [];
+  for (const v of raws) {
     if (!v.name && !v.ing) continue;
     const all = splitList(String(v.ing || "").replace(/\n/g, ",")).slice(0, 40).map(splitIngredient);
     const seaFromIng = all.filter(g => isSeasoningName(g.name)).map(g => g.name + (g.qty ? " " + g.qty : ""));
@@ -1075,8 +1092,8 @@ function parseMineRecipes(text) {
   return { recipes };
 }
 
-function checkMineRecipe(r) {
-  if (!r.name || r.name.length > 40) return "메뉴 이름을 40자 이내로 입력해 주세요.";
+function checkMineRecipe(r, i = 0) {
+  if (!r.name || r.name.length > 40) return `레시피 ${i + 1}: 메뉴 이름을 40자 이내로 입력해 주세요.`;
   if (!r.ingredients.length) return `'${r.name}': 주재료를 하나 이상 입력해 주세요.`;
   if (r.steps.length > 1000) return `'${r.name}': 조리법은 1000자 이내로 줄여 주세요.`;
   if (r.memo.length > 300) return `'${r.name}': 메모는 300자 이내로 줄여 주세요.`;
@@ -1776,8 +1793,8 @@ function renderMenus() {
   const bookBtns = r => (r.type !== "mine" ? `<button class="mini fill" data-mact="toMine" data-id="${esc(r.id)}">멍꼬북으로 옮기기</button>` : "") +
     `<button class="mini danger" data-mact="delRecipe" data-id="${esc(r.id)}">삭제</button>`;
   $("recipeList").innerHTML = recipesNotice() + (book.length
-    ? listHtml(book, r => { const an = analyzeRecipe(r, items); return menuRowHtml("b:" + r.id, r, an, { right: `재료 ${an.have.length}/${(r.ingredients || []).length}`, buttons: bookBtns(r) }); })
-    : `<div class="list"><p class="empty">${recipeFilter ? "이 종류의 레시피가 없습니다." : "레시피북이 비어 있습니다.<br>클로드 추천을 저장하거나 인터넷 레시피를 추가해 보세요."}</p></div>`);
+    ? listHtml(book, r => { const an = analyzeRecipe(r, items); return menuRowHtml("b:" + r.id, r, an, { right: `재료 ${an.have.length}/${an.have.length + an.missing.length}`, buttons: bookBtns(r) }); })
+    : `<div class="list"><p class="empty">${recipeFilter ? "이 종류의 레시피가 없습니다." : "레시피북이 비어 있습니다.<br>멍꼬북 레시피를 추가하거나, 클로드 추천·인터넷 레시피를 저장해 보세요."}</p></div>`);
 }
 
 document.querySelectorAll("#menuSeg button").forEach(b => b.onclick = () => {
@@ -1867,6 +1884,7 @@ $("m_parse").onclick = () => {
 
 // 멍꼬북 레시피 추가 창
 let mineRows = [];
+const servingsOf = v => { const n = Math.round(Number(v)); return n > 0 ? Math.min(20, n) : null; };   // 비우면 빈칸 그대로
 const ingText = list => (list || []).map(g => g.name + (g.qty ? " " + g.qty : "")).join(", ");
 function mineRowHtml(r, i) {
   return `<div class="qrow" data-mi="${i}">
@@ -1886,7 +1904,7 @@ function readMineRows() {
     const f = k => el.querySelector(`[data-mf="${k}"]`).value;
     const all = splitList(f("ing")).slice(0, 40).map(splitIngredient);
     mineRows[Number(el.dataset.mi)] = {
-      name: f("name").trim(), servings: Math.min(20, Math.max(1, Math.round(Number(f("servings"))))) || null,
+      name: f("name").trim(), servings: servingsOf(f("servings")),
       ingredients: all.filter(g => !isSeasoningName(g.name)),
       seasonings: [...splitList(f("sea")), ...all.filter(g => isSeasoningName(g.name)).map(g => g.name + (g.qty ? " " + g.qty : ""))].slice(0, 40),
       steps: f("steps").trim(), memo: f("memo").trim()
@@ -1901,13 +1919,15 @@ function renderMineRows() {
   $("mn_rows").innerHTML = mineRows.length ? mineRows.map(mineRowHtml).join("") : '<p class="meta">남은 레시피가 없습니다.</p>';
 }
 $("r_addMine").onclick = () => {
-  $("mn_prompt").value = buildMinePrompt();
-  $("mn_text").value = "";
+  $("mn_prompt").value = buildMinePrompt();   // 붙여넣은 답은 남겨 둠 (실수로 닫아도 다시 확인 가능)
   showMineStep(1);
   $("mineDialog").showModal();
 };
+const mineEditing = () => !$("mn_step2").classList.contains("hidden") && mineRows.length > 0;
+const mineCloseOk = () => !mineEditing() || confirm("확인 화면의 레시피를 저장하지 않고 닫을까요?");
 $("mn_cancel1").onclick = () => $("mineDialog").close();
-$("mn_cancel2").onclick = () => $("mineDialog").close();
+$("mn_cancel2").onclick = () => { if (mineCloseOk()) $("mineDialog").close(); };
+$("mineDialog").addEventListener("cancel", e => { if (!mineCloseOk()) e.preventDefault(); });
 $("mn_back").onclick = () => showMineStep(1);
 $("mn_copy").onclick = async () => {
   try { await navigator.clipboard.writeText(buildMinePrompt()); alert("요청문을 복사했습니다.\n클로드 채팅에 붙여넣고, '내 레시피:' 아래에 레시피를 적어 보내세요."); }
@@ -1932,7 +1952,7 @@ $("mn_rows").addEventListener("click", e => {
 $("mn_save").onclick = async () => {
   readMineRows();
   if (!mineRows.length) { alert("저장할 레시피가 없습니다."); return; }
-  for (const r of mineRows) { const err = checkMineRecipe(r); if (err) { alert(err); return; } }
+  for (const [i, r] of mineRows.entries()) { const err = checkMineRecipe(r, i); if (err) { alert(err); return; } }
   const batch = writeBatch(db);
   mineRows.forEach(r => batch.set(doc(recipesCol), {
     type: "mine", ...r, sourceName: "", sourceUrl: "",
@@ -1940,7 +1960,7 @@ $("mn_save").onclick = async () => {
   }));
   $("mineDialog").close();
   try { await batch.commit(); }
-  catch (err) { recipeWriteError(err); showMineStep(2); $("mineDialog").showModal(); }
+  catch (err) { recipeWriteError(err); showMineStep(2); if (!$("mineDialog").open) $("mineDialog").showModal(); }
 };
 
 // 인터넷 레시피 추가 창
@@ -1953,14 +1973,14 @@ $("w_save").onclick = async () => {
   const r = {
     type: "web", name: $("w_name").value.trim(), sourceName: $("w_source").value.trim().slice(0, 40),
     sourceUrl: $("w_url").value.trim(), ingredients: splitList($("w_ing").value).slice(0, 30).map(splitIngredient),
-    seasonings: splitList($("w_sea").value).slice(0, 30), servings: Math.min(20, Math.max(1, Math.round(Number($("w_serv").value)))) || null,
+    seasonings: splitList($("w_sea").value).slice(0, 30), servings: servingsOf($("w_serv").value),
     steps: $("w_steps").value.trim()
   };
   const err = checkWebRecipe(r);
   if (err) { alert(err); return; }
   $("webDialog").close();   // 입력칸은 다음에 창을 열 때 비움 → 실패하면 입력한 그대로 다시 열어 줌
   try { await addDoc(recipesCol, { ...r, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: who() }); }
-  catch (e) { recipeWriteError(e); $("webDialog").showModal(); }
+  catch (e) { recipeWriteError(e); if (!$("webDialog").open) $("webDialog").showModal(); }
 };
 
 // ===== 백업 창 =====
