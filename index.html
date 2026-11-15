@@ -289,10 +289,13 @@
       <select id="f_qtyType">
         <option value="weight">무게 (g)</option>
         <option value="count">개수 (개)</option>
+        <option value="serving">인분</option>
         <option value="percent">비율 (%)</option>
       </select></div>
     <div id="f_amountWrap"><label id="f_amountLabel">현재 수량 (g)</label>
       <input id="f_amount" type="number" inputmode="decimal" min="0" step="any"></div>
+    <div id="f_unitWrap" class="hidden" style="flex:0 0 76px"><label>단위</label>
+      <input id="f_unit" maxlength="4" placeholder="개"></div>
   </div>
   <div id="f_gpsWrap">
     <label>1인분 기준 (g)</label>
@@ -583,7 +586,7 @@ const UNIT_W = {
 };
 const NUM = { "하나":1, "한":1, "둘":2, "두":2, "셋":3, "세":3, "석":3, "넷":4, "네":4, "다섯":5, "여섯":6, "일곱":7, "여덟":8, "아홉":9, "열":10, "반":0.5 };
 const NUMWORDS = "하나|한|둘|두|셋|세|석|넷|네|다섯|여섯|일곱|여덟|아홉|열|반";
-const UNITS = "킬로그램|kg|킬로|그램|g|ml|리터|l|근|봉지|봉|개|알|구|입|모|팩|병|캔|통|마리|포기|송이|줄|장|단|묶음|망|박스|판|%";
+const UNITS = "인분|킬로그램|kg|킬로|그램|g|ml|리터|l|근|봉지|봉|개|알|구|입|모|팩|병|캔|통|마리|포기|송이|줄|장|단|묶음|망|박스|판|%";
 const UNIT_RE = new RegExp(`^(${UNITS})$`, "i");
 
 // ===== 공통 도구 =====
@@ -609,7 +612,8 @@ function estimateExpiry(category, storage, baseDate) {
 function amountText(it) {
   if (it.qtyType === "stock") return "있음";   // 양 기록 안 함
   const a = round1(Number(it.amount) || 0);
-  if (it.qtyType === "count") return `${a}개`;
+  if (it.qtyType === "count") return `${a}${it.unitLabel || "개"}`;
+  if (it.qtyType === "serving") return `${a}인분`;
   if (it.qtyType === "percent") return `${a}%`;
   const gps = Number(it.gramsPerServing) || 0;
   return gps ? `${a}g (약 ${round1(a / gps)}인분)` : `${a}g`;
@@ -746,7 +750,8 @@ function expiryHtml(it) {
 function shortAmount(it) {
   if (it.qtyType === "stock") return "있음";
   const a = round1(Number(it.amount) || 0);
-  if (it.qtyType === "count") return `${a}개`;
+  if (it.qtyType === "count") return `${a}${it.unitLabel || "개"}`;
+  if (it.qtyType === "serving") return `${a}인분`;
   if (it.qtyType === "percent") return `${a}%`;
   const gps = Number(it.gramsPerServing) || 0;
   return gps ? `약 ${round1(a / gps)}인분` : `${a}g`;
@@ -754,7 +759,8 @@ function shortAmount(it) {
 function volumeText(it) {
   if (it.qtyType === "stock") return "양 기록 안 함 (새로 사면 [수정]에서 용량 입력)";
   const a = round1(Number(it.amount) || 0);
-  if (it.qtyType === "count") return `${a}개`;
+  if (it.qtyType === "count") return `${a}${it.unitLabel || "개"}`;
+  if (it.qtyType === "serving") return `${a}인분`;
   if (it.qtyType === "percent") return `${a}% 남음`;
   const gps = Number(it.gramsPerServing) || 0;
   return `${a}g` + (gps ? ` (1인분 ${gps}g${it.servingEstimated ? ", 추정" : ""})` : "");
@@ -809,6 +815,7 @@ function groupAmount(g) {
   const t = g[0].qtyType;
   if (t === "percent" && g.every(x => x.qtyType === "percent")) return g.slice(0, 3).map(x => `${round1(Number(x.amount) || 0)}%`).join(", ") + (g.length > 3 ? " …" : "");
   if (g.some(x => x.qtyType !== t) || t === "stock") return `${g.length}개 품목`;
+  if (t === "count" && g.some(x => (x.unitLabel || "개") !== (g[0].unitLabel || "개"))) return `${g.length}개 품목`;
   const sum = round1(g.reduce((a, x) => a + (Number(x.amount) || 0), 0));
   return shortAmount({ ...g[0], amount: sum });
 }
@@ -1093,7 +1100,7 @@ function parseBackup(text) {
     const id = it && typeof it === "object" ? String(it.id ?? "") : "";
     if (id) allIds.add(id);   // 검사에서 걸러져도 '백업에 있던 품목'으로 기억 → 완전히 되돌리기에서 지우지 않음
     if (!ID_RE.test(id) || /^__.*__$/.test(id) || seen.has(id)) { skipped.push(`${label}: 식별 번호 이상`); continue; }
-    const qtyType = ["weight", "count", "percent", "stock"].includes(it.qtyType) ? it.qtyType : null;
+    const qtyType = ["weight", "count", "serving", "percent", "stock"].includes(it.qtyType) ? it.qtyType : null;
     const amount = Number(it.amount);
     const err = !qtyType ? "수량 방식 이상" : checkItem({ name: it.name, amount: it.amount, qtyType, category: it.category, storage: it.storage });
     if (err) { skipped.push(`${label}: ${err.split("\n")[0]}`); continue; }
@@ -1110,6 +1117,7 @@ function parseBackup(text) {
       initialAmount: init >= 0 && init <= cap ? round1(Math.max(init, amount)) : round1(amount),
       gramsPerServing: qtyType === "weight" && gps > 0 && gps <= 10000 ? gps : null,
       servingEstimated: !!it.servingEstimated,
+      ...(qtyType === "count" && typeof it.unitLabel === "string" && it.unitLabel.trim() ? { unitLabel: it.unitLabel.trim().slice(0, 4) } : {}),
       expiry, expiryEstimated: expiry ? !!it.expiryEstimated : false,
       alertDays: Number.isInteger(alert) && alert >= 0 && alert <= 365 ? alert : 7,
       source: ["네이버", "컬리", "이마트몰", "시장", "기타"].includes(it.source) ? it.source : "기타",
@@ -1327,7 +1335,8 @@ function suggestShopping(list, shop, now = Date.now()) {
   const isLow = it => it.status !== "다씀" && Number(it.amount) > 0 && (
     it.qtyType === "weight" ? Number(it.amount) <= (Number(it.gramsPerServing) || 100) :
     it.qtyType === "percent" ? Number(it.amount) <= 20 :
-    it.qtyType === "count" ? Number(it.amount) <= 1 && Number(it.initialAmount) > 1 : false);
+    it.qtyType === "count" ? Number(it.amount) <= 1 && Number(it.initialAmount) > 1 :
+    it.qtyType === "serving" ? Number(it.amount) <= 1 && Number(it.initialAmount) > 1 : false);
   const groups = new Map();
   for (const it of list) {
     const k = shopKey(it.baseName || it.name);
@@ -1386,6 +1395,8 @@ function defaultDeduct(item, qty, isSea, cap = true) {
     if (n != null && isWUnit(unit)) v = n * W_UNITS[unit];
     else if (n != null && unit === "인분") v = n * gps;
     else v = gps * (isSea ? 0.1 : 1);   // 단위를 g으로 못 바꾸면 1인분
+  } else if (item.qtyType === "serving") {
+    v = n != null && (unit === "인분" || unit === "") ? n : 1;   // 레시피가 g 등이면 1인분
   } else if (item.qtyType === "count") {
     v = n != null && !isWUnit(unit) && !/큰술|작은술|스푼|컵|인분/.test(unit) ? n : 1;
   } else if (item.qtyType === "percent") {
@@ -1412,7 +1423,7 @@ function planCook(rec, list) {
       const take = round1(Math.min(cur, need));
       need = round1(need - take);
       used.add(item.id);
-      rows.push({ itemId: item.id, name: dispName(item), full: item.name, ing: ingText, qtyType: item.qtyType, current: cur,
+      rows.push({ itemId: item.id, name: dispName(item), full: item.name, ing: ingText, qtyType: item.qtyType, unitLabel: item.unitLabel, current: cur,
         deduct: take, include: item.qtyType !== "stock", sea: false });
     });
     if (need > 0 && rows.length) rows[rows.length - 1].short = need;   // 냉장고에 있는 것보다 레시피가 많을 때
@@ -1422,7 +1433,7 @@ function planCook(rec, list) {
     const item = ownedSeasoning(g.name, seaItems, used);
     if (!item) continue;
     used.add(item.id);
-    rows.push({ itemId: item.id, name: dispName(item), full: item.name, ing: g.name + (g.qty ? " " + g.qty : ""), qtyType: item.qtyType, current: Number(item.amount) || 0,
+    rows.push({ itemId: item.id, name: dispName(item), full: item.name, ing: g.name + (g.qty ? " " + g.qty : ""), qtyType: item.qtyType, unitLabel: item.unitLabel, current: Number(item.amount) || 0,
       deduct: defaultDeduct(item, g.qty, true), include: false, sea: true });
   }
   return { rows, missing: an.missing.map(g => ({ name: g.name, qty: g.qty || "" })) };
@@ -1524,10 +1535,11 @@ function checkWebRecipe(r) {
 // ===== 추가/수정 창 =====
 function updateFormUnits() {
   const t = $("f_qtyType").value;
-  $("f_amountLabel").textContent = t === "count" ? "현재 수량 (개)" : (t === "percent" ? "현재 수량 (%)" : "현재 수량 (g)");
+  $("f_amountLabel").textContent = t === "count" ? "현재 수량 (개)" : t === "serving" ? "현재 수량 (인분)" : (t === "percent" ? "현재 수량 (%)" : "현재 수량 (g)");
   $("f_gpsWrap").classList.toggle("hidden", t !== "weight");
   if (t === "percent" && $("f_amount").value === "") $("f_amount").value = 100;
   $("f_amountWrap").classList.toggle("hidden", t === "stock");
+  $("f_unitWrap").classList.toggle("hidden", t !== "count");   // 개수형: 장·봉·캔 같은 단위
   if (t === "stock") $("f_amount").value = 1;   // 저장 시에도 1로 고정
 }
 function fillDefaultGps() {
@@ -1561,6 +1573,7 @@ function openItemDialog(it) {
   $("f_source").value = it?.source || "시장";
   $("f_purchasedAt").value = it?.purchasedAt || todayStr();
   $("f_memo").value = it?.memo || "";
+  $("f_unit").value = it?.qtyType === "count" ? (it.unitLabel || "") : "";
   $("f_base").value = it?.baseName && it.baseName !== it.name ? it.baseName : "";
   $("f_done").classList.toggle("hidden", !it || it.status === "다씀");
   updateFormUnits();
@@ -1611,6 +1624,7 @@ $("f_save").onclick = async () => {
     name, baseName: $("f_base").value.trim().slice(0, 20) || name, category, storage, qtyType,
     amount: round1(amount),
     gramsPerServing, servingEstimated,
+    unitLabel: qtyType === "count" ? ($("f_unit").value.trim().replace(/[^가-힣a-zA-Z]/g, "").slice(0, 4) || "개") : "",
     expiry, expiryEstimated,
     alertDays: calcAlertDays(category, purchasedAt, expiry),
     source: $("f_source").value,
@@ -1667,9 +1681,11 @@ function openUse(it) {
   }
   $("u_title").textContent = `${dispName(it)} 사용` + (dispName(it) !== it.name ? ` (${it.name})` : "");
   $("u_current").textContent = "현재: " + amountText(it);
-  const units = it.qtyType === "count" ? ["개"] : (it.qtyType === "percent" ? ["%"] : ["인분", "g"]);
+  const lbl = it.unitLabel || "개";
+  const units = it.qtyType === "count" ? [lbl] : it.qtyType === "serving" ? ["인분"] : (it.qtyType === "percent" ? ["%"] : ["인분", "g"]);
   $("u_unit").innerHTML = units.map(u => `<option>${u}</option>`).join("");
-  const quick = it.qtyType === "count" ? [[1, "개"], [2, "개"]]
+  const quick = it.qtyType === "count" ? [[1, lbl], [2, lbl]]
+    : it.qtyType === "serving" ? [[0.5, "인분"], [1, "인분"], [2, "인분"]]
     : it.qtyType === "percent" ? [[10, "%"], [25, "%"], [50, "%"]]
     : [[0.5, "인분"], [1, "인분"], [2, "인분"]];
   $("u_quick").innerHTML = quick.map(([v, u]) => `<button type="button" class="chip" data-v="${v}" data-u="${u}">${v}${u}</button>`).join("");
@@ -1757,8 +1773,8 @@ function parseLine(raw) {
   const storage = guessStorage(name);
 
   // 4) 단위 환산
-  const { qtyType, amount, notes } = stockOnly ? convertQty(name, category, null, "있음") : convertQty(name, category, num, unit);
-  return { raw: raw.trim(), name, category, storage, qtyType, amount, expiry, memo: "", note: notes.join(" / ") };
+  const { qtyType, amount, notes, unitLabel } = stockOnly ? convertQty(name, category, null, "있음") : convertQty(name, category, num, unit);
+  return { raw: raw.trim(), name, category, storage, qtyType, amount, unitLabel, expiry, memo: "", note: notes.join(" / ") };
 }
 
 // 수량+단위 → 앱 수량(g/개/%) 환산. 단·근·판 등은 추정값 + 안내 문구
@@ -1775,10 +1791,9 @@ function convertQty(name, category, num, unit) {
     const g = category === "신선채소" ? 375 : 600;
     qtyType = "weight"; amount = amount * g;
     notes.push(`1근 = ${g}g으로 계산했습니다 (추정)`);
-  } else if (unit === "인분") {   // 분류별 1인분 기준으로 무게 추정 → 목록에 '약 N인분'
-    const g = GPS[category] || 100;
-    qtyType = "weight"; amount = amount * g;
-    notes.push(`1인분 ≈ ${g}g으로 계산했습니다 (추정)`);
+  } else if (unit === "인분") {   // 인분 그대로 (레시피에서 'N인분'으로 뺄 수 있게)
+    qtyType = "serving";
+    if (num == null) notes.splice(0, 1, "수량이 없어 1인분으로 넣었습니다");
   } else if (unit === "%") {
     qtyType = "percent";
   } else if (unit === "판") {
@@ -1796,8 +1811,11 @@ function convertQty(name, category, num, unit) {
   } else if (unit && !UNIT_RE.test(unit)) {
     notes.push(`'${unit}' 단위를 몰라 개수로 넣었습니다`);
   }
-  return { qtyType, amount: round1(amount), notes };
+  // 개수형은 원래 단위(장·봉·캔·모 …)를 기억해 그대로 보여 줌
+  const unitLabel = qtyType === "count" && COUNT_LABELS.includes(unit) && unit !== "판" ? unit : "";
+  return { qtyType, amount: round1(amount), notes, unitLabel };
 }
+const COUNT_LABELS = ["개", "알", "장", "봉", "봉지", "캔", "병", "팩", "모", "마리", "송이", "줄", "통", "묶음", "망", "박스", "포기", "단", "구"];
 
 function parseText(text) {
   return text.split(/[,\n，、]+|\s+그리고\s+/).map(s => s.trim()).filter(Boolean).map(parseLine);
@@ -1934,7 +1952,7 @@ function parseTableRow(v, rawLine) {
   if (expiryEst) notes.push("Claude가 짐작한 유통기한이라 '추정'으로 저장합니다");
   return {
     raw: rawLine, name, baseName: baseOptions[0] || "", baseOptions, category, storage, qtyType: q.qtyType, amount: q.amount, noExpiry,
-    expiry: ex.date, expiryEst, memo: String(memoCell).trim(), note: notes.join(" / ")
+    unitLabel: q.unitLabel, expiry: ex.date, expiryEst, memo: String(memoCell).trim(), note: notes.join(" / ")
   };
 }
 
@@ -2004,7 +2022,7 @@ function qRowHtml(r, i) {
       <select data-f="storage">${opt([["냉장","냉장"],["냉동","냉동"],["실온","실온"]], r.storage)}</select>
     </div>
     <div class="inline">
-      <select data-f="qtyType">${opt([["weight","무게 (g)"],["count","개수 (개)"],["percent","비율 (%)"]], r.qtyType)}</select>
+      <select data-f="qtyType">${opt([["weight","무게 (g)"],["count",`개수 (${r.unitLabel || "개"})`],["serving","인분"],["percent","비율 (%)"]], r.qtyType)}</select>
       <input data-f="amount" type="number" inputmode="decimal" min="0" step="any" value="${r.qtyType === "stock" ? "" : esc(r.amount)}" ${r.qtyType === "stock" ? 'disabled placeholder="양 기록 안 함"' : 'placeholder="수량"'}>
     </div>
     <label>유통기한 (비워 두면 추정값, 조미료는 유통기한 없음)</label>
@@ -2154,6 +2172,7 @@ $("q_save").onclick = async () => {
       name, baseName: String(r.baseName || "").trim().slice(0, 20) || name, category: r.category, storage: r.storage, qtyType: r.qtyType,
       amount, initialAmount: amount,
       gramsPerServing: isWeight ? (GPS[r.category] || 100) : null,
+      ...(r.qtyType === "count" && r.unitLabel ? { unitLabel: r.unitLabel } : {}),
       servingEstimated: isWeight,
       expiry, expiryEstimated: !!expiry && (!r.expiry || !!r.expiryEst),
       alertDays: calcAlertDays(r.category, purchasedAt, expiry),
@@ -2422,16 +2441,16 @@ $("sh_copy").onclick = async () => {
 
 // 이 요리 했어요 창
 let cookPlan = null;
-const unitOf = t => t === "weight" ? "g" : t === "count" ? "개" : t === "percent" ? "%" : "";
+const unitOf = (t, lbl) => t === "weight" ? "g" : t === "count" ? (lbl || "개") : t === "serving" ? "인분" : t === "percent" ? "%" : "";
 function cookRowHtml(r, i) {
   const left = round1(Math.max(0, r.current - (Number(r.deduct) || 0)));
-  const fake = { qtyType: r.qtyType, amount: r.current };
+  const fake = { qtyType: r.qtyType, amount: r.current, unitLabel: r.unitLabel };
   return `<div class="ckrow" data-ci="${i}">
     <input type="checkbox" data-cf="include" ${r.include ? "checked" : ""} ${r.qtyType === "stock" ? "disabled" : ""} aria-label="${esc(r.name)} 빼기">
     <div><b>${esc(r.name)}</b>${r.full && r.full !== r.name ? ` <span class="item-tag">${esc(r.full)}</span>` : ""}${r.sea ? ' <span class="item-tag">조미료</span>' : ""}</div>
     <div class="ckamt">${r.qtyType === "stock" ? '<span class="meta">양 기록 안 함</span>'
-      : `<input type="number" inputmode="decimal" min="0" step="any" data-cf="deduct" value="${esc(r.deduct)}"><span>${unitOf(r.qtyType)}</span>`}</div>
-    <p class="meta">레시피: ${esc(r.ing)}${r.short ? ` <span class="ing-miss">(${esc(amountText({ qtyType: r.qtyType, amount: r.short }).replace(/ \(.*\)$/, ""))} 부족)</span>` : ""} · 지금 ${esc(amountText(fake))}${r.qtyType === "stock" ? "" : ` → <span data-left>${r.include ? `남음 ${esc(amountText({ ...fake, amount: left }))}${left === 0 ? " (다 씀)" : ""}` : "빼지 않음"}</span>`}</p>
+      : `<input type="number" inputmode="decimal" min="0" step="any" data-cf="deduct" value="${esc(r.deduct)}"><span>${esc(unitOf(r.qtyType, r.unitLabel))}</span>`}</div>
+    <p class="meta">레시피: ${esc(r.ing)}${r.short ? ` <span class="ing-miss">(${esc(amountText({ ...fake, amount: r.short }).replace(/ \(.*\)$/, ""))} 부족)</span>` : ""} · 지금 ${esc(amountText(fake))}${r.qtyType === "stock" ? "" : ` → <span data-left>${r.include ? `남음 ${esc(amountText({ ...fake, amount: left }))}${left === 0 ? " (다 씀)" : ""}` : "빼지 않음"}</span>`}</p>
   </div>`;
 }
 function renderCook() {
@@ -2459,7 +2478,7 @@ $("ck_rows").addEventListener("input", e => {   // 남는 양 바로 보여 주�
   const r = cookPlan.rows[Number(el.dataset.ci)];
   const left = round1(Math.max(0, r.current - (Number(e.target.value) || 0)));
   const span = el.querySelector("[data-left]");
-  if (span && r.include) span.textContent = `남음 ${amountText({ qtyType: r.qtyType, amount: left })}${left === 0 ? " (다 씀)" : ""}`;
+  if (span && r.include) span.textContent = `남음 ${amountText({ qtyType: r.qtyType, unitLabel: r.unitLabel, amount: left })}${left === 0 ? " (다 씀)" : ""}`;
 });
 $("ck_cancel").onclick = () => $("cookDialog").close();
 $("ck_missing").addEventListener("click", async e => {
