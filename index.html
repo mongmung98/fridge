@@ -197,6 +197,7 @@
       <div class="filters">
         <div class="chips" id="storageChips">
           <button class="chip on" data-st="전체">전체</button>
+          <button class="chip" data-st="반찬">반찬</button>
           <button class="chip" data-st="냉장">냉장</button>
           <button class="chip" data-st="냉동">냉동</button>
           <button class="chip" data-st="실온">실온</button>
@@ -869,9 +870,11 @@ const listHtml = (arr, fn, cls = "") => `<div class="list ${cls}">${arr.map(x =>
 function renderItems() {
   const q = $("searchBox").value.trim();
   const isSea = it => it.category === "양념·소스";
+  const isSide = it => it.category === "반찬";
+  const isFood = it => !isSea(it) && !isSide(it);   // 반찬·조미료는 보관 장소와 상관없이 따로 모음
   const list = items.filter(it =>
     (storageFilter === "전체" ||
-      (storageFilter === "조미료" ? isSea(it) : it.storage === storageFilter && !isSea(it))) &&
+      (storageFilter === "조미료" ? isSea(it) : storageFilter === "반찬" ? isSide(it) : it.storage === storageFilter && isFood(it))) &&
     (!q || String(it.name || "").includes(q) || String(it.baseName || "").includes(q)));
   const active = sortItems(list.filter(it => it.status !== "다씀"));
   const used = sortItems(list.filter(it => it.status === "다씀"));
@@ -884,14 +887,16 @@ function renderItems() {
   } else if (storageFilter === "전체") {
     // 냉장고 칸처럼 냉장 / 냉동 / 실온으로 나눠 보여 주고, 조미료(양념·소스)는 보관 장소와 상관없이 맨 아래 따로
     const KNOWN = ["냉장", "냉동", "실온"];
-    const food = active.filter(it => !isSea(it)), sea = active.filter(isSea);
-    html = [...KNOWN, "기타"].map(st => {
+    const food = active.filter(isFood), sea = active.filter(isSea), side = active.filter(isSide);
+    // 순서: 반찬 → 냉장 → 냉동 → 실온 → (기타) → 조미료
+    html = (side.length ? `<h2 class="group">반찬 <span class="num">${side.length}</span></h2>` + itemList(side, "", true) : "") +
+      [...KNOWN, "기타"].map(st => {
       const arr = food.filter(it => st === "기타" ? !KNOWN.includes(it.storage) : it.storage === st);
       return arr.length ? `<h2 class="group">${st} <span class="num">${arr.length}</span></h2>` +
         itemList(arr, st === "냉동" ? "frozen" : "") : "";
     }).join("") + (sea.length ? `<h2 class="group">조미료 <span class="num">${sea.length}</span></h2>` + itemList(sea, "", true) : "");
   } else {
-    html = itemList(active, storageFilter === "냉동" ? "frozen" : "", storageFilter === "조미료");
+    html = itemList(active, storageFilter === "냉동" ? "frozen" : "", storageFilter === "조미료" || storageFilter === "반찬");
   }
   if ($("showUsed").checked) {
     html += '<h2 class="group">다 쓴 품목</h2>' + (used.length ? listHtml(used, usedRowHtml) : '<p class="meta">없음</p>');
